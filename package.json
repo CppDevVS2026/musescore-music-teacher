@@ -1,0 +1,16 @@
+{
+  "name": "musescore-music-teacher",
+  "version": "1.0.0",
+  "description": "MuseScore 3/4 plugins for music-theory teaching and focus-friendly practice.",
+  "scripts": {
+    "test": "node --test"
+  },
+  "license": "MIT",
+  "keywords": [
+    "musescore",
+    "music-theory",
+    "plugin",
+    "harmonic-analysis",
+    "education"
+  ]
+}
