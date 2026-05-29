@@ -575,12 +575,14 @@ function classifyNonChordTone(prevPitch, pitch, nextPitch, chordPcs) {
             return { type: "passing", description: "Passing tone (step in, step on in same direction)" };
         if (stepIn && stepOut && nextPitch === prevPitch)
             return { type: "neighbor", description: "Neighbor tone (steps away and back)" };
+        // A held-over tone (no approach motion) resolving by step is a suspension.
+        // Checked before appoggiatura because prevPitch === pitch makes stepIn false.
+        if (prevPitch === pitch && stepOut)
+            return { type: "suspension", description: "Suspension / retardation (held over, resolves by step)" };
         if (!stepIn && stepOut)
             return { type: "appoggiatura", description: "Appoggiatura (leap in, step out)" };
         if (stepIn && !stepOut)
             return { type: "escape", description: "Escape tone (step in, leap out)" };
-        if (prevPitch === pitch)
-            return { type: "suspension", description: "Suspension / retardation (held over, resolves by step)" };
     } else if (hasNext && !hasPrev) {
         return { type: "anticipation", description: "Possible anticipation (no preceding tone)" };
     }

@@ -233,6 +233,8 @@ test("classifyNonChordTone identifies passing and neighbor tones", () => {
     assert.strictEqual(T.classifyNonChordTone(60, 64, 67, cMaj), null);
     // leap in, step out -> appoggiatura
     assert.strictEqual(T.classifyNonChordTone(60, 65, 64, cMaj).type, "appoggiatura");
+    // held over (prev == current) resolving by step -> suspension, not appoggiatura
+    assert.strictEqual(T.classifyNonChordTone(60, 60, 59, [7, 11, 2]).type, "suspension");
 });
 
 test("checkVoiceLeading detects parallel fifths and octaves", () => {
