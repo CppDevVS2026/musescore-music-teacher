@@ -2389,6 +2389,658 @@ function harmonicFunctionDistribution(events, key) {
     return dist;
 }
 
+// ===========================================================================
+//  PHASE 4: TEACHING-ORIENTED FEATURES
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+//  Sight-reading difficulty scoring
+// ---------------------------------------------------------------------------
+
+// Score the difficulty of a passage for sight-reading (1-10 scale).
+// Considers: range, chromaticism, leap frequency, rhythm complexity, key signature.
+function scoreSightReadingDifficulty(events, key) {
+    if (!events || events.length === 0) return { score: 1, factors: {} };
+
+    var factors = {};
+    var total = 0;
+
+    // 1. Range difficulty: wider range = harder.
+    var allPitches = [];
+    for (var i = 0; i < events.length; i++) {
+        var p = events[i].pitches || [];
+        for (var j = 0; j < p.length; j++) allPitches.push(p[j]);
+    }
+    if (allPitches.length > 0) {
+        var lo = allPitches[0], hi = allPitches[0];
+        for (var r = 1; r < allPitches.length; r++) {
+            if (allPitches[r] < lo) lo = allPitches[r];
+            if (allPitches[r] > hi) hi = allPitches[r];
+        }
+        var range = hi - lo;
+        factors.range = range > 24 ? 3 : (range > 16 ? 2 : 1);
+        total += factors.range;
+    }
+
+    // 2. Chromaticism: more chromatic notes = harder.
+    var chromaticCount = 0;
+    if (key) {
+        for (var c = 0; c < allPitches.length; c++) {
+            if (!isDiatonic(mod(allPitches[c], 12), key)) chromaticCount++;
+        }
+        var chromaticPct = allPitches.length > 0 ? chromaticCount / allPitches.length : 0;
+        factors.chromaticism = chromaticPct > 0.3 ? 3 : (chromaticPct > 0.1 ? 2 : 1);
+        total += factors.chromaticism;
+    }
+
+    // 3. Leap frequency.
+    var leapCount = 0;
+    for (var l = 1; l < allPitches.length; l++) {
+        if (Math.abs(allPitches[l] - allPitches[l - 1]) > 4) leapCount++;
+    }
+    var leapPct = allPitches.length > 1 ? leapCount / (allPitches.length - 1) : 0;
+    factors.leaps = leapPct > 0.4 ? 3 : (leapPct > 0.2 ? 2 : 1);
+    total += factors.leaps;
+
+    // 4. Voice count.
+    var maxVoices = 0;
+    for (var v = 0; v < events.length; v++) {
+        var vp = events[v].pitches || [];
+        if (vp.length > maxVoices) maxVoices = vp.length;
+    }
+    factors.voices = maxVoices > 3 ? 2 : 1;
+    total += factors.voices;
+
+    // Normalize to 1-10.
+    var maxPossible = 12;
+    var score = Math.max(1, Math.min(10, Math.round(total / maxPossible * 10)));
+    factors.total = total;
+
+    return { score: score, factors: factors };
+}
+
+// ---------------------------------------------------------------------------
+//  Interval drill generator
+// ---------------------------------------------------------------------------
+
+// Generate an interval identification exercise.
+// Returns { startPitch, endPitch, intervalName, semitones, direction }.
+function generateIntervalDrill(options) {
+    var opt = options || {};
+    var minPitch = opt.minPitch || 48;
+    var maxPitch = opt.maxPitch || 84;
+    var intervals = opt.intervals || [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+
+    var INTERVAL_NAMES = {
+        0: "P1 (unison)", 1: "m2", 2: "M2", 3: "m3", 4: "M3",
+        5: "P4", 6: "TT (tritone)", 7: "P5", 8: "m6", 9: "M6",
+        10: "m7", 11: "M7", 12: "P8 (octave)"
+    };
+
+    var semitones = intervals[Math.floor(Math.random() * intervals.length)];
+    var direction = Math.random() < 0.5 ? "ascending" : "descending";
+    var startPitch = minPitch + Math.floor(Math.random() * (maxPitch - minPitch - semitones));
+    var endPitch = direction === "ascending" ? startPitch + semitones : startPitch - semitones;
+
+    if (endPitch < minPitch) { endPitch = startPitch + semitones; direction = "ascending"; }
+    if (endPitch > maxPitch) { endPitch = startPitch - semitones; direction = "descending"; }
+
+    return {
+        startPitch: startPitch,
+        endPitch: endPitch,
+        startName: pcToName(mod(startPitch, 12), false),
+        endName: pcToName(mod(endPitch, 12), false),
+        intervalName: INTERVAL_NAMES[semitones] || (semitones + " semitones"),
+        semitones: semitones,
+        direction: direction
+    };
+}
+
+// ---------------------------------------------------------------------------
+//  Chord identification drill generator
+// ---------------------------------------------------------------------------
+
+// Generate a chord identification exercise.
+function generateChordDrill(options) {
+    var opt = options || {};
+    var qualities = opt.qualities || ["maj", "min", "dim", "aug", "7", "min7", "maj7"];
+    var minRoot = opt.minRoot || 0;
+    var maxRoot = opt.maxRoot || 11;
+
+    var rootPc = minRoot + Math.floor(Math.random() * (maxRoot - minRoot + 1));
+    var quality = qualities[Math.floor(Math.random() * qualities.length)];
+
+    var QUALITY_INTERVALS = {
+        "maj": [0, 4, 7], "min": [0, 3, 7], "dim": [0, 3, 6],
+        "aug": [0, 4, 8], "7": [0, 4, 7, 10], "min7": [0, 3, 7, 10],
+        "maj7": [0, 4, 7, 11], "dim7": [0, 3, 6, 9]
+    };
+
+    var intervals = QUALITY_INTERVALS[quality] || [0, 4, 7];
+    var pitchClasses = [];
+    for (var i = 0; i < intervals.length; i++) {
+        pitchClasses.push(mod(rootPc + intervals[i], 12));
+    }
+
+    return {
+        rootPc: rootPc,
+        rootName: pcToName(rootPc, false),
+        quality: quality,
+        pitchClasses: pitchClasses,
+        answer: pcToName(rootPc, false) + " " + quality
+    };
+}
+
+// ---------------------------------------------------------------------------
+//  Scale drill generator
+// ---------------------------------------------------------------------------
+
+function generateScaleDrill(options) {
+    var opt = options || {};
+    var scales = opt.scales || ["major", "natural-minor", "harmonic-minor", "melodic-minor", "dorian", "mixolydian"];
+
+    var SCALE_PATTERNS = {
+        "major": [0, 2, 4, 5, 7, 9, 11],
+        "natural-minor": [0, 2, 3, 5, 7, 8, 10],
+        "harmonic-minor": [0, 2, 3, 5, 7, 8, 11],
+        "melodic-minor": [0, 2, 3, 5, 7, 9, 11],
+        "dorian": [0, 2, 3, 5, 7, 9, 10],
+        "phrygian": [0, 1, 3, 5, 7, 8, 10],
+        "lydian": [0, 2, 4, 6, 7, 9, 11],
+        "mixolydian": [0, 2, 4, 5, 7, 9, 10],
+        "locrian": [0, 1, 3, 5, 6, 8, 10],
+        "whole-tone": [0, 2, 4, 6, 8, 10],
+        "chromatic": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+        "pentatonic-major": [0, 2, 4, 7, 9],
+        "pentatonic-minor": [0, 3, 5, 7, 10],
+        "blues": [0, 3, 5, 6, 7, 10]
+    };
+
+    var scaleName = scales[Math.floor(Math.random() * scales.length)];
+    var rootPc = Math.floor(Math.random() * 12);
+    var pattern = SCALE_PATTERNS[scaleName] || SCALE_PATTERNS["major"];
+    var pitchClasses = [];
+    var noteNames = [];
+    for (var i = 0; i < pattern.length; i++) {
+        var pc = mod(rootPc + pattern[i], 12);
+        pitchClasses.push(pc);
+        noteNames.push(pcToName(pc, false));
+    }
+
+    return {
+        rootPc: rootPc,
+        rootName: pcToName(rootPc, false),
+        scaleName: scaleName,
+        pitchClasses: pitchClasses,
+        noteNames: noteNames,
+        answer: pcToName(rootPc, false) + " " + scaleName
+    };
+}
+
+// ---------------------------------------------------------------------------
+//  Error diagnosis with pedagogical feedback
+// ---------------------------------------------------------------------------
+
+// Common voice-leading and harmony errors with teaching explanations.
+var TEACHING_MESSAGES = {
+    parallelFifths: {
+        error: "Parallel perfect fifths",
+        explanation: "Two voices moving in parallel perfect fifths weakens their independence. In common-practice style, each voice should have its own melodic identity.",
+        fix: "Move one voice by step (contrary or oblique motion) while the other leaps, or use an imperfect consonance (3rd or 6th) instead."
+    },
+    parallelOctaves: {
+        error: "Parallel perfect octaves",
+        explanation: "Parallel octaves effectively reduce two voices to one, eliminating independence. This is the strongest voice-leading prohibition in tonal counterpoint.",
+        fix: "Use contrary motion, or have one voice move by step to a 3rd or 6th."
+    },
+    voiceCrossing: {
+        error: "Voice crossing",
+        explanation: "When a lower voice moves above a higher voice (or vice versa), it confuses the listener's perception of the voice parts and blurs the texture.",
+        fix: "Keep each voice within its assigned range. If ranges overlap, move the offending voice back within bounds."
+    },
+    spacingError: {
+        error: "Spacing too wide between upper voices",
+        explanation: "In SATB writing, adjacent upper voices (soprano-alto, alto-tenor) should generally stay within an octave. Wider spacing creates gaps in the harmonic texture.",
+        fix: "Redistribute the notes so no adjacent upper voice pair exceeds an octave."
+    },
+    unresolvedLeadingTone: {
+        error: "Unresolved leading tone",
+        explanation: "The leading tone (scale degree 7) has a strong tendency to resolve up by half step to the tonic. Leaving it unresolved creates an unsatisfied expectation.",
+        fix: "Move the leading tone up by half step to the tonic in the next chord, especially when it's in an outer voice."
+    },
+    unresolvedSeventh: {
+        error: "Unresolved chordal seventh",
+        explanation: "The seventh of a chord is a dissonance that typically resolves down by step. Leaving it unresolved or moving it up breaks the expected resolution.",
+        fix: "Resolve the chordal seventh down by step (half step or whole step) to the next chord tone."
+    },
+    doubledLeadingTone: {
+        error: "Doubled leading tone",
+        explanation: "Doubling the leading tone makes it difficult to resolve both voices correctly without creating parallel octaves. It also over-emphasizes the tendency tone.",
+        fix: "Double the root or fifth of the chord instead. The third (leading tone) should appear only once."
+    },
+    directFifths: {
+        error: "Direct (hidden) fifths",
+        explanation: "Two voices arriving at a perfect fifth by similar motion can sound like parallel fifths. This is particularly problematic between outer voices (soprano and bass).",
+        fix: "Approach the perfect fifth with contrary motion in at least one voice, or ensure the upper voice moves by step."
+    }
+};
+
+// Diagnose errors in a progression and return pedagogical feedback.
+function diagnoseErrors(events, key) {
+    if (!events || events.length < 2 || !key) return [];
+    var diagnoses = [];
+
+    for (var i = 1; i < events.length; i++) {
+        var prevP = events[i - 1].pitches || [];
+        var currP = events[i].pitches || [];
+        if (prevP.length < 2 || currP.length < 2) continue;
+
+        // Check voice leading issues.
+        var vlIssues = checkVoiceLeading(prevP, currP);
+        for (var v = 0; v < vlIssues.length; v++) {
+            var issue = vlIssues[v];
+            var msgKey = null;
+            if (issue.type === "parallel-fifths") msgKey = "parallelFifths";
+            else if (issue.type === "parallel-octaves") msgKey = "parallelOctaves";
+            else if (issue.type === "direct-fifths" || issue.type === "direct-octaves" ||
+                     issue.type === "hidden-fifths" || issue.type === "hidden-octaves") msgKey = "directFifths";
+
+            if (msgKey && TEACHING_MESSAGES[msgKey]) {
+                diagnoses.push({
+                    measure: events[i].measure || i + 1,
+                    index: i,
+                    error: TEACHING_MESSAGES[msgKey].error,
+                    explanation: TEACHING_MESSAGES[msgKey].explanation,
+                    fix: TEACHING_MESSAGES[msgKey].fix
+                });
+            }
+        }
+
+        // Check SATB ranges if 4 voices.
+        if (currP.length === 4) {
+            var sorted = currP.slice().sort(function(a, b) { return a - b; });
+            var rangeIssues = checkSATBRanges(sorted);
+            for (var ri = 0; ri < rangeIssues.length; ri++) {
+                var rIssue = rangeIssues[ri];
+                var rMsgKey = null;
+                if (rIssue.problem === "crossing") rMsgKey = "voiceCrossing";
+                else if (rIssue.problem === "spacing") rMsgKey = "spacingError";
+                if (rMsgKey && TEACHING_MESSAGES[rMsgKey]) {
+                    diagnoses.push({
+                        measure: events[i].measure || i + 1,
+                        index: i,
+                        error: TEACHING_MESSAGES[rMsgKey].error,
+                        explanation: TEACHING_MESSAGES[rMsgKey].explanation,
+                        fix: TEACHING_MESSAGES[rMsgKey].fix
+                    });
+                }
+            }
+        }
+    }
+
+    return diagnoses;
+}
+
+// ---------------------------------------------------------------------------
+//  Roman numeral quiz generator
+// ---------------------------------------------------------------------------
+
+// Generate a Roman numeral identification exercise for a given key.
+function generateRomanNumeralQuiz(key, options) {
+    if (!key) key = { tonicPc: 0, mode: "major" };
+    var opt = options || {};
+    var count = opt.count || 4;
+
+    var MAJOR_SCALE = [0, 2, 4, 5, 7, 9, 11];
+    var MINOR_SCALE = [0, 2, 3, 5, 7, 8, 10];
+    var scale = key.mode === "major" ? MAJOR_SCALE : MINOR_SCALE;
+    var MAJOR_QUALITIES = ["maj", "min", "min", "maj", "maj", "min", "dim"];
+    var MINOR_QUALITIES = ["min", "dim", "maj", "min", "min", "maj", "maj"];
+    var qualities = key.mode === "major" ? MAJOR_QUALITIES : MINOR_QUALITIES;
+
+    var chords = [];
+    for (var i = 0; i < count; i++) {
+        var degIdx = Math.floor(Math.random() * 7);
+        var rootPc = mod(key.tonicPc + scale[degIdx], 12);
+        var chord = identifyChord(
+            [rootPc, mod(rootPc + (qualities[degIdx] === "min" || qualities[degIdx] === "dim" ? 3 : 4), 12),
+             mod(rootPc + (qualities[degIdx] === "dim" ? 6 : (qualities[degIdx] === "aug" ? 8 : 7)), 12)],
+            rootPc
+        );
+        var rn = romanNumeral(chord, key);
+        chords.push({
+            rootPc: rootPc,
+            rootName: pcToName(rootPc, false),
+            quality: qualities[degIdx],
+            degree: degIdx + 1,
+            romanNumeral: rn,
+            pitchClasses: chord ? chord.chordPcs : [rootPc]
+        });
+    }
+
+    return {
+        key: keyName(key),
+        chords: chords
+    };
+}
+
+// ---------------------------------------------------------------------------
+//  Cadence drill generator
+// ---------------------------------------------------------------------------
+
+function generateCadenceDrill(key) {
+    if (!key) key = { tonicPc: 0, mode: "major" };
+    var CADENCE_TYPES = [
+        { name: "Perfect Authentic Cadence (PAC)", degrees: [5, 1], qualities: ["maj", "maj"],
+          description: "V → I with soprano on tonic, root position. The strongest and most conclusive cadence." },
+        { name: "Imperfect Authentic Cadence (IAC)", degrees: [5, 1], qualities: ["maj", "maj"],
+          description: "V → I but with soprano NOT on tonic, or inverted. Less final than PAC." },
+        { name: "Half Cadence (HC)", degrees: [1, 5], qualities: ["maj", "maj"],
+          description: "Any chord → V. Creates an open, unfinished feeling. Common at phrase midpoints." },
+        { name: "Deceptive Cadence (DC)", degrees: [5, 6], qualities: ["maj", "min"],
+          description: "V → vi. The ear expects I but gets vi instead. Both chords share the tonic pitch class." },
+        { name: "Plagal Cadence (PC)", degrees: [4, 1], qualities: ["maj", "maj"],
+          description: "IV → I. The 'Amen' cadence. Subdominant function resolving to tonic." }
+    ];
+
+    var scale = key.mode === "major" ? [0, 2, 4, 5, 7, 9, 11] : [0, 2, 3, 5, 7, 8, 10];
+    var idx = Math.floor(Math.random() * CADENCE_TYPES.length);
+    var cad = CADENCE_TYPES[idx];
+
+    var chords = [];
+    for (var i = 0; i < cad.degrees.length; i++) {
+        var rootPc = mod(key.tonicPc + scale[cad.degrees[i] - 1], 12);
+        chords.push({ rootPc: rootPc, rootName: pcToName(rootPc, false) });
+    }
+
+    return {
+        cadenceType: cad.name,
+        description: cad.description,
+        key: keyName(key),
+        chords: chords
+    };
+}
+
+// ---------------------------------------------------------------------------
+//  Scale degree ear-training hints
+// ---------------------------------------------------------------------------
+
+var SCALE_DEGREE_HINTS = {
+    1: { name: "Tonic", solfege: "Do", character: "Home, rest, stability. The center of gravity.", color: "#f44336" },
+    2: { name: "Supertonic", solfege: "Re", character: "Slightly restless, wants to move up to 3 or down to 1.", color: "#ff9800" },
+    3: { name: "Mediant", solfege: "Mi", character: "Warm and stable in major; dark and expressive in minor.", color: "#ffeb3b" },
+    4: { name: "Subdominant", solfege: "Fa", character: "Leaning, wants to resolve down to 3. Distinct from 3 by its pull.", color: "#4caf50" },
+    5: { name: "Dominant", solfege: "Sol", character: "Strong, stable, second only to tonic. The 'other pillar' of tonality.", color: "#2196f3" },
+    6: { name: "Submediant", solfege: "La", character: "Sweet in major, sad in minor. Can feel like a relative-key tonic.", color: "#9c27b0" },
+    7: { name: "Leading Tone", solfege: "Ti", character: "Maximum tension, urgently pulls up to 1. Half step below tonic.", color: "#e91e63" }
+};
+
+// Get ear-training hints for a pitch in a given key.
+function getScaleDegreeHint(pitch, key) {
+    if (!key) return null;
+    var pc = mod(pitch, 12);
+    var deg = scaleDegree(pc, key);
+    if (!deg || deg < 1 || deg > 7) return null;
+    var hint = SCALE_DEGREE_HINTS[deg];
+    if (!hint) return null;
+    return {
+        degree: deg,
+        name: hint.name,
+        solfege: hint.solfege,
+        character: hint.character,
+        color: hint.color,
+        noteName: pcToName(pc, false)
+    };
+}
+
+// ---------------------------------------------------------------------------
+//  Common student mistake patterns
+// ---------------------------------------------------------------------------
+
+// Check for common student mistakes in a four-part harmony exercise.
+function detectCommonMistakes(events, key) {
+    if (!events || events.length === 0 || !key) return [];
+    var mistakes = [];
+
+    for (var i = 0; i < events.length; i++) {
+        var pitches = events[i].pitches || [];
+        var pcs = events[i].pitchClasses || [];
+        var chord = events[i].chord || identifyChord(pcs, events[i].bassPc);
+
+        // Check for doubled leading tone.
+        if (chord && key) {
+            var lt = mod(key.tonicPc + 11, 12); // Leading tone pc.
+            var ltCount = 0;
+            for (var j = 0; j < pcs.length; j++) {
+                if (mod(pcs[j], 12) === lt) ltCount++;
+            }
+            if (ltCount >= 2) {
+                mistakes.push({
+                    measure: events[i].measure || i + 1,
+                    index: i,
+                    type: "doubledLeadingTone",
+                    error: TEACHING_MESSAGES.doubledLeadingTone.error,
+                    explanation: TEACHING_MESSAGES.doubledLeadingTone.explanation,
+                    fix: TEACHING_MESSAGES.doubledLeadingTone.fix
+                });
+            }
+        }
+
+        // Check for missing root/fifth in a triad.
+        if (chord && pitches.length >= 3) {
+            var hasRoot = false, hasFifth = false;
+            var rootPc = chord.rootPc;
+            var fifthPc = mod(rootPc + 7, 12);
+            if (chord.quality === "dim") fifthPc = mod(rootPc + 6, 12);
+            if (chord.quality === "aug") fifthPc = mod(rootPc + 8, 12);
+            for (var k = 0; k < pcs.length; k++) {
+                if (mod(pcs[k], 12) === rootPc) hasRoot = true;
+                if (mod(pcs[k], 12) === fifthPc) hasFifth = true;
+            }
+            if (!hasRoot) {
+                mistakes.push({
+                    measure: events[i].measure || i + 1,
+                    index: i,
+                    type: "missingRoot",
+                    error: "Missing chord root",
+                    explanation: "The root is the foundation of the chord and should almost always be present, especially in root position.",
+                    fix: "Include the root of the chord. If doubling is needed, the root is the best note to double."
+                });
+            }
+        }
+    }
+
+    // Check tendency tone resolution (pairwise).
+    if (key) {
+        for (var t = 1; t < events.length; t++) {
+            var tendencyIssues = checkTendencyTones(events[t - 1], events[t], key);
+            for (var ti = 0; ti < tendencyIssues.length; ti++) {
+                var tIssue = tendencyIssues[ti];
+                var tMsgKey = tIssue.type === "leading-tone" ? "unresolvedLeadingTone" : "unresolvedSeventh";
+                if (TEACHING_MESSAGES[tMsgKey]) {
+                    mistakes.push({
+                        measure: events[t].measure || t + 1,
+                        index: t,
+                        type: tMsgKey,
+                        error: TEACHING_MESSAGES[tMsgKey].error,
+                        explanation: TEACHING_MESSAGES[tMsgKey].explanation,
+                        fix: TEACHING_MESSAGES[tMsgKey].fix
+                    });
+                }
+            }
+        }
+    }
+
+    return mistakes;
+}
+
+// ---------------------------------------------------------------------------
+//  Guided analysis walkthrough
+// ---------------------------------------------------------------------------
+
+// Generate a step-by-step guided analysis for a progression.
+function generateGuidedAnalysis(events, key) {
+    if (!events || events.length === 0) return { steps: [] };
+    if (!key) key = detectKey(events);
+
+    var steps = [];
+
+    // Step 1: Key identification.
+    steps.push({
+        step: 1,
+        title: "Identify the Key",
+        instruction: "Look at the key signature and the final chord. The key is " + keyName(key) + ".",
+        detail: "The tonic pitch class is " + pcToName(key.tonicPc, false) +
+                " and the mode is " + key.mode + "."
+    });
+
+    // Step 2: Label each chord with Roman numerals.
+    var rnLabels = [];
+    for (var i = 0; i < events.length; i++) {
+        var chord = events[i].chord || identifyChord(events[i].pitchClasses || [], events[i].bassPc);
+        if (chord) {
+            rnLabels.push({
+                measure: events[i].measure || i + 1,
+                label: romanNumeral(chord, key),
+                chordName: chordLabel(chord)
+            });
+        }
+    }
+    steps.push({
+        step: 2,
+        title: "Label Chords with Roman Numerals",
+        instruction: "For each vertical sonority, identify the root, quality, and inversion. Then write the Roman numeral in the key.",
+        detail: "Found " + rnLabels.length + " chords: " +
+                rnLabels.map(function(rn) { return rn.label; }).join(" – ")
+    });
+
+    // Step 3: Identify non-chord tones.
+    steps.push({
+        step: 3,
+        title: "Identify Non-Chord Tones",
+        instruction: "Look for notes that don't belong to the current chord. Classify them as passing tones, neighbor tones, suspensions, appoggiaturas, escape tones, or anticipations.",
+        detail: "Check the top voice especially — compare each melody note against the chord tones below it."
+    });
+
+    // Step 4: Find cadences.
+    var cadences = [];
+    for (var c = 1; c < events.length; c++) {
+        var prevChord = events[c - 1].chord || identifyChord(events[c - 1].pitchClasses || [], events[c - 1].bassPc);
+        var currChord = events[c].chord || identifyChord(events[c].pitchClasses || [], events[c].bassPc);
+        if (prevChord && currChord) {
+            var prevSopPc = events[c - 1].pitchClasses ? events[c - 1].pitchClasses[events[c - 1].pitchClasses.length - 1] : null;
+            var currSopPc = events[c].pitchClasses ? events[c].pitchClasses[events[c].pitchClasses.length - 1] : null;
+            var cad = classifyCadence(prevChord, currChord, prevSopPc, currSopPc, key);
+            if (cad) cadences.push("m" + (events[c].measure || c + 1) + ": " + cad.label);
+        }
+    }
+    steps.push({
+        step: 4,
+        title: "Identify Cadences",
+        instruction: "Look at phrase endings for standard cadence patterns: PAC, IAC, HC, DC, plagal.",
+        detail: cadences.length > 0 ? "Found: " + cadences.join("; ") : "No standard cadences detected in this excerpt."
+    });
+
+    // Step 5: Check voice leading.
+    steps.push({
+        step: 5,
+        title: "Check Voice Leading",
+        instruction: "Scan for parallel 5ths and 8ves between all voice pairs. Check for proper tendency-tone resolution (leading tone up, 7ths down).",
+        detail: "Use the Voice-Leading Checker or Counterpoint Checker plugin for automated detection."
+    });
+
+    // Step 6: Harmonic function.
+    var dist = harmonicFunctionDistribution(events, key);
+    steps.push({
+        step: 6,
+        title: "Analyze Harmonic Function",
+        instruction: "Label each chord's function: Tonic (T), Predominant (PD/S), or Dominant (D). Look for the T → PD → D → T cycle.",
+        detail: dist.total > 0
+            ? "Distribution: T=" + dist.tonicPercent + "%, PD=" + dist.subdominantPercent +
+              "%, D=" + dist.dominantPercent + "%, Chromatic=" + dist.chromaticPercent + "%"
+            : "Not enough chords for distribution analysis."
+    });
+
+    return { key: keyName(key), steps: steps, totalSteps: steps.length };
+}
+
+// ---------------------------------------------------------------------------
+//  Practice tips generator
+// ---------------------------------------------------------------------------
+
+// Generate practice tips based on analysis of the score.
+function generatePracticeTips(events, key) {
+    if (!events || events.length === 0) return [];
+    var tips = [];
+
+    // Difficulty-based tips.
+    var difficulty = scoreSightReadingDifficulty(events, key);
+    if (difficulty.score >= 7) {
+        tips.push({
+            category: "Difficulty",
+            tip: "This passage is rated " + difficulty.score + "/10 difficulty. Break it into smaller sections and practice each one slowly before combining.",
+            priority: "high"
+        });
+    }
+
+    // Leap-heavy melodies.
+    if (difficulty.factors.leaps >= 3) {
+        tips.push({
+            category: "Leaps",
+            tip: "Many large leaps detected. Practice singing each interval before playing. Isolate the leaps and drill them as two-note groups.",
+            priority: "medium"
+        });
+    }
+
+    // Chromatic passages.
+    if (difficulty.factors.chromaticism >= 3) {
+        tips.push({
+            category: "Chromaticism",
+            tip: "Highly chromatic passage. Practice the diatonic skeleton first (remove chromatic notes), then add them back one at a time.",
+            priority: "medium"
+        });
+    }
+
+    // Wide range.
+    if (difficulty.factors.range >= 3) {
+        tips.push({
+            category: "Range",
+            tip: "Very wide range. Practice the highest and lowest passages separately, then connect them. Watch for hand position shifts.",
+            priority: "medium"
+        });
+    }
+
+    // General tips.
+    tips.push({
+        category: "General",
+        tip: "Always start by identifying the key, time signature, and any accidentals before playing.",
+        priority: "low"
+    });
+
+    if (events.length > 16) {
+        tips.push({
+            category: "Structure",
+            tip: "Long passage (" + events.length + " events). Map out the form and phrase structure first. Practice in 4-8 bar chunks.",
+            priority: "low"
+        });
+    }
+
+    return tips;
+}
+
+// ---------------------------------------------------------------------------
+//  Colors for teaching features
+// ---------------------------------------------------------------------------
+
+var COLORS_TEACHING = {
+    difficulty: "#d84315",     // deep orange
+    drill: "#1565c0",          // blue
+    error: "#b71c1c",          // red
+    hint: "#2e7d32",           // green
+    guided: "#4527a0",         // deep purple
+    practice: "#00838f"        // teal
+};
+
 // ---------------------------------------------------------------------------
 //  Extended colors for phase 3
 // ---------------------------------------------------------------------------
@@ -2522,6 +3174,21 @@ if (typeof module !== "undefined" && module.exports) {
         melodicIntervalClassContent: melodicIntervalClassContent,
         identifyStructuralTones: identifyStructuralTones,
         harmonicFunctionDistribution: harmonicFunctionDistribution,
-        COLORS_EXT3: COLORS_EXT3
+        COLORS_EXT3: COLORS_EXT3,
+        // Phase 4 exports (teaching)
+        scoreSightReadingDifficulty: scoreSightReadingDifficulty,
+        generateIntervalDrill: generateIntervalDrill,
+        generateChordDrill: generateChordDrill,
+        generateScaleDrill: generateScaleDrill,
+        TEACHING_MESSAGES: TEACHING_MESSAGES,
+        diagnoseErrors: diagnoseErrors,
+        generateRomanNumeralQuiz: generateRomanNumeralQuiz,
+        generateCadenceDrill: generateCadenceDrill,
+        SCALE_DEGREE_HINTS: SCALE_DEGREE_HINTS,
+        getScaleDegreeHint: getScaleDegreeHint,
+        detectCommonMistakes: detectCommonMistakes,
+        generateGuidedAnalysis: generateGuidedAnalysis,
+        generatePracticeTips: generatePracticeTips,
+        COLORS_TEACHING: COLORS_TEACHING
     };
 }
