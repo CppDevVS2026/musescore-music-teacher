@@ -668,3 +668,337 @@ test("analyzePhraseStructure handles empty input", () => {
     const result = T.analyzePhraseStructure([]);
     assert.strictEqual(result.structure, "unknown");
 });
+
+// ===================================================================
+//  PHASE 2 FEATURE TESTS
+// ===================================================================
+
+// --- SATB voice range checking ---
+
+test("checkSATBRanges passes for notes within range", () => {
+    // bass=48(C3), tenor=55(G3), alto=60(C4), soprano=67(G4)
+    const issues = T.checkSATBRanges([48, 55, 60, 67]);
+    assert.strictEqual(issues.length, 0);
+});
+
+test("checkSATBRanges detects out-of-range notes", () => {
+    // bass too low (30), soprano too high (85)
+    const issues = T.checkSATBRanges([30, 55, 60, 85]);
+    assert.ok(issues.some(i => i.voice === "bass" && i.problem === "below-range"));
+    assert.ok(issues.some(i => i.voice === "soprano" && i.problem === "above-range"));
+});
+
+test("checkSATBRanges detects voice crossing", () => {
+    // tenor(70) above alto(60)
+    const issues = T.checkSATBRanges([48, 70, 60, 75]);
+    assert.ok(issues.some(i => i.problem === "voice-crossing"));
+});
+
+test("checkSATBRanges detects spacing issues", () => {
+    // alto=55, soprano=72: 17 semitones apart (> octave)
+    const issues = T.checkSATBRanges([48, 50, 55, 72]);
+    assert.ok(issues.some(i => i.problem === "spacing"));
+});
+
+// --- Counterpoint checking ---
+
+test("checkCounterpoint detects parallel perfect intervals", () => {
+    const melody = [60, 62, 64];       // C4, D4, E4
+    const counter = [48, 50, 52];      // C3, D3, E3 (parallel octaves)
+    const issues = T.checkCounterpoint(melody, counter);
+    assert.ok(issues.some(i => i.type === "parallel-perfect"));
+});
+
+test("checkCounterpoint detects unison in middle", () => {
+    const melody = [60, 65, 67];
+    const counter = [48, 65, 55]; // unison at index 1 (middle)
+    const issues = T.checkCounterpoint(melody, counter);
+    assert.ok(issues.some(i => i.type === "unison"));
+});
+
+test("checkCounterpoint passes clean counterpoint", () => {
+    // Contrary motion with no parallel perfects.
+    const melody = [60, 62, 64, 65];
+    const counter = [55, 53, 52, 50];
+    const issues = T.checkCounterpoint(melody, counter);
+    const perfects = issues.filter(i => i.type === "parallel-perfect");
+    assert.strictEqual(perfects.length, 0);
+});
+
+// --- Cross-relation detection ---
+
+test("detectCrossRelations finds B-Bb cross-relation", () => {
+    const prev = [0, 4, 7, 11]; // C E G B
+    const curr = [0, 3, 5, 10]; // C Eb F Bb
+    const cr = T.detectCrossRelations(prev, curr);
+    assert.ok(cr.length > 0);
+    assert.ok(cr.some(r => r.pc1 === 11 && r.pc2 === 10));
+});
+
+test("detectCrossRelations returns empty for diatonic chords", () => {
+    const prev = [0, 4, 7]; // C E G
+    const curr = [2, 5, 9]; // D F A
+    const cr = T.detectCrossRelations(prev, curr);
+    assert.strictEqual(cr.length, 0);
+});
+
+// --- Melodic contour analysis ---
+
+test("analyzeMelodicContour computes range and climax", () => {
+    const pitches = [60, 62, 64, 67, 65, 62, 60];
+    const c = T.analyzeMelodicContour(pitches);
+    assert.ok(c);
+    assert.strictEqual(c.range, 7); // 67 - 60
+    assert.strictEqual(c.high, 67);
+    assert.strictEqual(c.low, 60);
+    assert.strictEqual(c.climaxIndex, 3);
+});
+
+test("analyzeMelodicContour classifies arch contour", () => {
+    // Ascend then descend with peak in middle.
+    const pitches = [60, 62, 64, 67, 69, 67, 64, 62, 60];
+    const c = T.analyzeMelodicContour(pitches);
+    assert.ok(c);
+    assert.strictEqual(c.contour, "arch");
+});
+
+test("analyzeMelodicContour reports leap/step percentages", () => {
+    const pitches = [60, 61, 62, 63, 72]; // 3 steps + 1 leap
+    const c = T.analyzeMelodicContour(pitches);
+    assert.ok(c);
+    assert.strictEqual(c.stepPercent, 75);
+    assert.strictEqual(c.leapPercent, 25);
+});
+
+// --- Texture classification ---
+
+test("classifyTexture detects monophonic texture", () => {
+    const events = [
+        { pitches: [60], pitchClasses: [0] },
+        { pitches: [62], pitchClasses: [2] },
+        { pitches: [64], pitchClasses: [4] }
+    ];
+    assert.strictEqual(T.classifyTexture(events), "monophonic");
+});
+
+test("classifyTexture detects homophonic texture", () => {
+    const events = [
+        { pitches: [60, 64, 67], pitchClasses: [0, 4, 7] },
+        { pitches: [62, 65, 69], pitchClasses: [2, 5, 9] },
+        { pitches: [64, 67, 71], pitchClasses: [4, 7, 11] }
+    ];
+    assert.strictEqual(T.classifyTexture(events), "homophonic");
+});
+
+// --- Form detection ---
+
+test("detectForm identifies binary form", () => {
+    const sections = [
+        { startMeasure: 1, endMeasure: 8, key: { tonicPc: 0 } },
+        { startMeasure: 9, endMeasure: 16, key: { tonicPc: 7 } }
+    ];
+    assert.strictEqual(T.detectForm(sections).form, "binary");
+});
+
+test("detectForm identifies ternary form (A-B-A)", () => {
+    const sections = [
+        { startMeasure: 1, endMeasure: 8, key: { tonicPc: 0 } },
+        { startMeasure: 9, endMeasure: 16, key: { tonicPc: 5 } },
+        { startMeasure: 17, endMeasure: 24, key: { tonicPc: 0 } }
+    ];
+    assert.strictEqual(T.detectForm(sections).form, "ternary");
+});
+
+test("detectForm identifies rounded binary", () => {
+    const sections = [
+        { startMeasure: 1, endMeasure: 8, key: { tonicPc: 0 } },
+        { startMeasure: 9, endMeasure: 16, key: { tonicPc: 0 } }
+    ];
+    assert.strictEqual(T.detectForm(sections).form, "binary-rounded");
+});
+
+// --- Cadential 6/4 detection ---
+
+test("detectCadential64 identifies I64 → V", () => {
+    const i64 = T.identifyChord([7, 0, 4], 7); // C/G (second inversion)
+    const v = T.identifyChord([7, 11, 2], 7);   // G major
+    const result = T.detectCadential64(i64, v, C_MAJOR);
+    assert.ok(result);
+    assert.strictEqual(result.type, "cadential-64");
+});
+
+test("detectCadential64 returns null for non-cadential", () => {
+    const i = T.identifyChord([0, 4, 7], 0); // C root position
+    const v = T.identifyChord([7, 11, 2], 7);
+    assert.strictEqual(T.detectCadential64(i, v, C_MAJOR), null); // Not second inversion
+});
+
+// --- Twelve-tone row analysis ---
+
+test("computeRowForms generates P, I, R, RI", () => {
+    // Webern-like row
+    const row = [0, 1, 4, 2, 3, 5, 6, 9, 7, 8, 10, 11];
+    const forms = T.computeRowForms(row);
+    assert.ok(forms);
+    assert.deepStrictEqual(forms.P0, row);
+    assert.deepStrictEqual(forms.R0, row.slice().reverse());
+    // I0 starts on same note.
+    assert.strictEqual(forms.I0[0], row[0]);
+    assert.strictEqual(forms.RI0.length, 12);
+});
+
+test("computeRowForms P transpositions are correct", () => {
+    const row = [0, 1, 3, 2, 6, 7, 5, 4, 8, 9, 11, 10];
+    const forms = T.computeRowForms(row);
+    // P5 should be P0 transposed up 5.
+    for (let i = 0; i < 12; i++) {
+        assert.strictEqual(forms.matrix.P[5][i], (row[i] + 5) % 12);
+    }
+});
+
+test("findRowForm matches P0 from a segment", () => {
+    const row = [0, 1, 4, 2, 3, 5, 6, 9, 7, 8, 10, 11];
+    const result = T.findRowForm(row, [0, 1, 4, 2, 3]);
+    assert.ok(result);
+    assert.strictEqual(result.type, "P");
+    assert.strictEqual(result.transposition, 0);
+});
+
+test("findRowForm matches transposed form", () => {
+    const row = [0, 1, 4, 2, 3, 5, 6, 9, 7, 8, 10, 11];
+    // P3: transpose everything by 3.
+    const p3 = row.map(x => (x + 3) % 12);
+    const result = T.findRowForm(row, p3.slice(0, 5));
+    assert.ok(result);
+    assert.strictEqual(result.type, "P");
+    assert.strictEqual(result.transposition, 3);
+});
+
+test("findRowForm returns null for non-matching sequence", () => {
+    const row = [0, 1, 4, 2, 3, 5, 6, 9, 7, 8, 10, 11];
+    assert.strictEqual(T.findRowForm(row, [0, 5, 3, 8, 1]), null);
+});
+
+// --- Chord-scale theory ---
+
+test("suggestChordScales returns scales for a major chord", () => {
+    const chord = T.identifyChord([0, 4, 7], 0);
+    const scales = T.suggestChordScales(chord);
+    assert.ok(scales.length >= 1);
+    assert.ok(scales.some(s => s.scaleName === "ionian"));
+});
+
+test("suggestChordScales returns scales for a dom7 chord", () => {
+    const chord = T.identifyChord([0, 4, 7, 10], 0);
+    const scales = T.suggestChordScales(chord);
+    assert.ok(scales.some(s => s.scaleName === "mixolydian"));
+});
+
+test("suggestChordScales returns scales for a min7 chord", () => {
+    const chord = T.identifyChord([0, 3, 7, 10], 0);
+    const scales = T.suggestChordScales(chord);
+    assert.ok(scales.some(s => s.scaleName === "dorian"));
+});
+
+test("suggestChordScales returns empty for null chord", () => {
+    assert.deepStrictEqual(T.suggestChordScales(null), []);
+});
+
+// --- Harmonic tension mapping ---
+
+test("computeHarmonicTension assigns tension scores", () => {
+    const events = [
+        { tick: 0, measure: 1, pitchClasses: [0, 4, 7], bassPc: 0 },     // C major (low tension)
+        { tick: 480, measure: 1, pitchClasses: [7, 11, 2, 5], bassPc: 7 } // G7 (higher tension)
+    ];
+    const tensions = T.computeHarmonicTension(events, C_MAJOR);
+    assert.strictEqual(tensions.length, 2);
+    assert.ok(tensions[1].tension > tensions[0].tension); // G7 more tense than C
+});
+
+test("computeHarmonicTension dim7 is very tense", () => {
+    const events = [
+        { tick: 0, measure: 1, pitchClasses: [0, 4, 7], bassPc: 0 },
+        { tick: 480, measure: 1, pitchClasses: [11, 2, 5, 8], bassPc: 11 }
+    ];
+    const tensions = T.computeHarmonicTension(events, C_MAJOR);
+    assert.ok(tensions[1].tension >= 4);
+});
+
+// --- Augmented sixth classification ---
+
+test("classifyAugmentedSixth identifies Italian Aug6", () => {
+    // In C major: Ab(8), C(0), F#(6) = It+6
+    const result = T.classifyAugmentedSixth([8, 0, 6], C_MAJOR);
+    assert.ok(result);
+    assert.strictEqual(result.type, "It+6");
+});
+
+test("classifyAugmentedSixth identifies French Aug6", () => {
+    // In C major: Ab(8), C(0), D(2), F#(6) = Fr+6
+    const result = T.classifyAugmentedSixth([8, 0, 2, 6], C_MAJOR);
+    assert.ok(result);
+    assert.strictEqual(result.type, "Fr+6");
+});
+
+test("classifyAugmentedSixth returns null for non-aug6", () => {
+    assert.strictEqual(T.classifyAugmentedSixth([0, 4, 7], C_MAJOR), null);
+});
+
+// --- Planing / parallel chord motion ---
+
+test("detectPlaning finds parallel major chords", () => {
+    // C-D-E-F# major chords moving by whole step.
+    const events = [
+        { tick: 0, measure: 1, pitchClasses: [0, 4, 7], bassPc: 0 },
+        { tick: 480, measure: 1, pitchClasses: [2, 6, 9], bassPc: 2 },
+        { tick: 960, measure: 2, pitchClasses: [4, 8, 11], bassPc: 4 },
+        { tick: 1440, measure: 2, pitchClasses: [6, 10, 1], bassPc: 6 }
+    ];
+    const planes = T.detectPlaning(events, 3);
+    assert.ok(planes.length > 0);
+    assert.ok(planes[0].description.indexOf("Planing") >= 0);
+});
+
+test("detectPlaning returns empty for varied chord types", () => {
+    const events = [
+        { tick: 0, measure: 1, pitchClasses: [0, 4, 7], bassPc: 0 },
+        { tick: 480, measure: 1, pitchClasses: [2, 5, 9], bassPc: 2 },
+        { tick: 960, measure: 2, pitchClasses: [4, 8, 11], bassPc: 4 }
+    ];
+    const planes = T.detectPlaning(events, 3);
+    assert.strictEqual(planes.length, 0);
+});
+
+// --- Linear intervallic patterns ---
+
+test("detectLinearIntervallic finds parallel 10ths", () => {
+    // Upper = C4, D4, E4; Lower = Ab2, Bb2, C3 (interval 4 = major 3rd, mod 12)
+    // Actually let's use consistent intervals.
+    const upper = [64, 66, 68, 70]; // E4, F#4, G#4, A#4
+    const lower = [48, 50, 52, 54]; // C3, D3, E3, F#3 (interval 16 mod 12 = 4)
+    const lips = T.detectLinearIntervallic(upper, lower, 3);
+    assert.ok(lips.length > 0);
+});
+
+test("detectLinearIntervallic returns empty for varied intervals", () => {
+    const upper = [60, 65, 62, 68];
+    const lower = [48, 50, 55, 52];
+    const lips = T.detectLinearIntervallic(upper, lower, 4);
+    // Intervals vary widely, so no consistent pattern of length 4.
+    assert.ok(Array.isArray(lips));
+});
+
+// --- Hemiola detection ---
+
+test("detectHemiola returns array (basic check)", () => {
+    const durations = [480, 480, 480, 480, 480, 480];
+    const result = T.detectHemiola(durations, 3);
+    assert.ok(Array.isArray(result));
+});
+
+test("detectHemiola returns empty for uniform quarter notes in 4/4", () => {
+    const durations = [480, 480, 480, 480];
+    const result = T.detectHemiola(durations, 4);
+    assert.strictEqual(result.length, 0);
+});

@@ -33,6 +33,12 @@ MusicTeacher/
   motionAnalysis.qml       Motion Type & Hidden 5ths/8ves Analyzer
   chordVoicing.qml         Chord Voicing & Spacing Analyzer
   setClassAnalysis.qml     Pitch-Class Set / Forte Analysis (post-tonal)
+  counterpointChecker.qml  Counterpoint & SATB Range Checker
+  melodicContour.qml       Melodic Contour Analyzer
+  formAnalysis.qml         Form & Texture Analyzer
+  serialAnalysis.qml       Twelve-Tone / Serial Analysis
+  chordScales.qml          Chord-Scale Suggester (jazz) + Tension Map
+  planingDetector.qml      Planing & Linear Intervallic Patterns
   practiceChunker.qml      Practice Chunker        (focus aid)
   focusTimer.qml           Focus Practice Timer    (focus aid)
   colorCoding.qml          Color Coding            (focus aid)
@@ -60,6 +66,12 @@ test/
 | **Motion Analysis** | Classifies voice motion between all pairs (parallel, similar, contrary, oblique) and detects hidden (direct) fifths and octaves. |
 | **Chord Voicing** | Analyses open/close position, spacing between upper voices, doublings, and common-tone diminished 7th chords (CT°7). |
 | **Set-Class Analysis** | Post-tonal pitch-class set theory: computes normal form, prime form, interval vector, and Forte set-class name for each vertical sonority. |
+| **Counterpoint Checker** | Checks first-species counterpoint rules, SATB voice ranges (crossing, spacing), and cross-relations (false relations) between adjacent chords. |
+| **Melodic Contour** | Analyses the top voice melody: range, tessitura, climax point, contour type (arch, ascending, descending-arch), and leap/step percentages. |
+| **Form & Texture** | Detects musical form (binary, ternary, rondo, through-composed) from key regions and cadences; classifies texture (monophonic/homophonic/polyphonic); detects cadential 6/4 chords. |
+| **Serial Analysis** | Twelve-tone row analysis: derives P0 from the first 12 distinct pitch classes, computes all 48 row forms (P/I/R/RI × 12 transpositions), searches the score for row-form matches. |
+| **Chord-Scale Suggester** | Jazz chord-scale theory: suggests compatible scales for each chord (ionian, dorian, mixolydian, etc.), maps harmonic tension across the piece, and classifies augmented sixth chords (It+6, Fr+6, Ger+6). |
+| **Planing & LIP Detector** | Detects parallel chord motion (planing/parallelism), linear intervallic patterns (10-10, 6-6, alternating), and hemiola rhythmic patterns. |
 
 ### Focus / ADHD practice aids
 
@@ -87,7 +99,10 @@ test/
   secondary dominants **blue**, mixture/chromatic **orange**, cadences **green**,
   voice-leading problems **red**, modulations **deep purple**, sequences **teal**,
   pedal points **brown**, tritone subs **red**, tendency issues **dark green**,
-  CT°7 **amber**, set-class labels **indigo**.
+  CT°7 **amber**, set-class labels **indigo**, counterpoint issues **dark pink**,
+  cross-relations **red**, form labels **deep purple**, serial row-forms **deep
+  orange**, chord-scales **blue**, tension peaks **orange**, augmented sixths
+  **pink**, planing **teal green**, LIPs **brown**.
 - The analysis plugins modify the score (inside a single undo step) — press
   **Ctrl+Z** to remove all annotations at once.
 

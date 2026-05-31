@@ -1336,6 +1336,638 @@ function analyzePhraseStructure(cadences) {
 }
 
 // ---------------------------------------------------------------------------
+//  Counterpoint rules (1st-species style checking)
+// ---------------------------------------------------------------------------
+
+// SATB voice ranges (MIDI note numbers).
+var VOICE_RANGES = {
+    soprano: { low: 60, high: 79 },  // C4 – G5
+    alto:    { low: 55, high: 74 },  // G3 – D5
+    tenor:   { low: 48, high: 67 },  // C3 – G4
+    bass:    { low: 40, high: 60 }   // E2 – C4
+};
+
+// Check SATB voice ranges. pitches: array of 4 MIDI numbers [bass, tenor, alto, soprano].
+function checkSATBRanges(pitches) {
+    var names = ["bass", "tenor", "alto", "soprano"];
+    var issues = [];
+    if (!pitches || pitches.length < 4) return issues;
+    for (var i = 0; i < 4; i++) {
+        var range = VOICE_RANGES[names[i]];
+        if (pitches[i] < range.low) {
+            issues.push({ voice: names[i], pitch: pitches[i], problem: "below-range",
+                          description: names[i] + " (" + pitches[i] + ") below range minimum " + range.low });
+        }
+        if (pitches[i] > range.high) {
+            issues.push({ voice: names[i], pitch: pitches[i], problem: "above-range",
+                          description: names[i] + " (" + pitches[i] + ") above range maximum " + range.high });
+        }
+    }
+    // Check voice crossing.
+    for (var j = 0; j < 3; j++) {
+        if (pitches[j] > pitches[j + 1]) {
+            issues.push({ voice: names[j] + "/" + names[j + 1], problem: "voice-crossing",
+                          description: names[j] + " crosses above " + names[j + 1] });
+        }
+    }
+    // Check spacing: upper voices (S/A, A/T) should be within an octave.
+    for (var k = 1; k < 3; k++) {
+        if (pitches[k + 1] - pitches[k] > 12) {
+            issues.push({ voice: names[k] + "/" + names[k + 1], problem: "spacing",
+                          description: "More than an octave between " + names[k] + " and " + names[k + 1] });
+        }
+    }
+    return issues;
+}
+
+// Check basic first-species counterpoint rules between two melodic lines.
+// melody/counterpoint: arrays of MIDI pitches (same length).
+function checkCounterpoint(melody, counterpoint) {
+    var issues = [];
+    if (!melody || !counterpoint || melody.length < 2) return issues;
+    var len = Math.min(melody.length, counterpoint.length);
+
+    for (var i = 0; i < len; i++) {
+        var interval = Math.abs(melody[i] - counterpoint[i]) % 12;
+        // Unisons only at beginning/end in first species.
+        if (interval === 0 && i > 0 && i < len - 1) {
+            issues.push({ index: i, type: "unison", description: "Unison in middle of phrase" });
+        }
+    }
+    for (var j = 1; j < len; j++) {
+        var prevInt = Math.abs(melody[j - 1] - counterpoint[j - 1]) % 12;
+        var currInt = Math.abs(melody[j] - counterpoint[j]) % 12;
+        var mDir = melody[j] - melody[j - 1];
+        var cDir = counterpoint[j] - counterpoint[j - 1];
+
+        // Parallel perfect intervals.
+        if ((currInt === 0 || currInt === 7) && (prevInt === currInt) &&
+            ((mDir > 0 && cDir > 0) || (mDir < 0 && cDir < 0))) {
+            issues.push({ index: j, type: "parallel-perfect",
+                          description: "Parallel perfect interval at beat " + (j + 1) });
+        }
+        // Direct/hidden 5ths or 8ves.
+        if ((currInt === 0 || currInt === 7) &&
+            ((mDir > 0 && cDir > 0) || (mDir < 0 && cDir < 0)) &&
+            Math.abs(melody[j] - melody[j - 1]) > 2) {
+            issues.push({ index: j, type: "direct-perfect",
+                          description: "Direct motion to perfect interval at beat " + (j + 1) });
+        }
+    }
+    return issues;
+}
+
+// Detect cross-relations (false relations) between adjacent chords.
+// prevPitchClasses, currPitchClasses: arrays of pc (0-11).
+function detectCrossRelations(prevPcs, currPcs) {
+    var results = [];
+    if (!prevPcs || !currPcs) return results;
+    // Chromatic pc pairs that represent cross-relations (same letter, different accidental).
+    // Map each pc to its "natural" letter: C=0/1, D=1/2, E=3/4, F=4/5, G=6/7, A=8/9, B=10/11.
+    // For sharps (right side): pc maps to letter below. For flats (left side): pc maps to letter above.
+    // We check BOTH possible letter assignments for black keys.
+    var pcLetterSharp = [0, 0, 1, 1, 2, 3, 3, 4, 4, 5, 5, 6]; // sharp interpretation
+    var pcLetterFlat  = [0, 1, 1, 2, 2, 3, 4, 4, 5, 5, 6, 6]; // flat interpretation
+    for (var i = 0; i < prevPcs.length; i++) {
+        for (var j = 0; j < currPcs.length; j++) {
+            var p1 = mod(prevPcs[i], 12);
+            var p2 = mod(currPcs[j], 12);
+            if (p1 === p2) continue;
+            var diff = Math.abs(p1 - p2);
+            if (diff !== 1 && diff !== 11) continue;
+            // Check if they could map to the same letter under any enharmonic interpretation.
+            var sameLetter = (pcLetterSharp[p1] === pcLetterSharp[p2]) ||
+                             (pcLetterSharp[p1] === pcLetterFlat[p2]) ||
+                             (pcLetterFlat[p1] === pcLetterSharp[p2]) ||
+                             (pcLetterFlat[p1] === pcLetterFlat[p2]);
+            if (sameLetter) {
+                var name1 = pcToName(p1, false);
+                var name2 = pcToName(p2, true); // Use flats for the second to get "Bb" not "A#".
+                results.push({
+                    pc1: p1, pc2: p2,
+                    name1: name1, name2: name2,
+                    description: "Cross-relation: " + name1 + " → " + name2
+                });
+            }
+        }
+    }
+    return results;
+}
+
+// ---------------------------------------------------------------------------
+//  Melodic contour analysis
+// ---------------------------------------------------------------------------
+
+// Analyse the melodic contour of a pitch sequence.
+// pitches: array of MIDI note numbers.
+function analyzeMelodicContour(pitches) {
+    if (!pitches || pitches.length < 2) return null;
+    var low = pitches[0], high = pitches[0], lowIdx = 0, highIdx = 0;
+    var intervals = [];
+    var directions = [];
+    var leapCount = 0, stepCount = 0, repeatCount = 0;
+
+    for (var i = 0; i < pitches.length; i++) {
+        if (pitches[i] < low) { low = pitches[i]; lowIdx = i; }
+        if (pitches[i] > high) { high = pitches[i]; highIdx = i; }
+        if (i > 0) {
+            var diff = pitches[i] - pitches[i - 1];
+            intervals.push(diff);
+            if (diff > 0) directions.push("up");
+            else if (diff < 0) directions.push("down");
+            else directions.push("same");
+            var absDiff = Math.abs(diff);
+            if (absDiff === 0) repeatCount++;
+            else if (absDiff <= 2) stepCount++;
+            else leapCount++;
+        }
+    }
+
+    var range = high - low;
+    // Tessitura: middle 50% of notes.
+    var sorted = pitches.slice().sort(function (a, b) { return a - b; });
+    var q1 = sorted[Math.floor(sorted.length * 0.25)];
+    var q3 = sorted[Math.floor(sorted.length * 0.75)];
+
+    // Contour classification.
+    var contour = "undulating";
+    if (highIdx <= pitches.length * 0.33) contour = "descending-arch";
+    else if (highIdx >= pitches.length * 0.67) contour = "ascending";
+    else if (lowIdx <= pitches.length * 0.33 && highIdx >= pitches.length * 0.67) contour = "ascending";
+    else if (highIdx > pitches.length * 0.25 && highIdx < pitches.length * 0.75) contour = "arch";
+
+    var total = leapCount + stepCount + repeatCount;
+    return {
+        range: range,
+        low: low, high: high,
+        lowIndex: lowIdx, highIndex: highIdx,
+        tessitura: { low: q1, high: q3 },
+        climaxIndex: highIdx,
+        contour: contour,
+        leapPercent: total > 0 ? Math.round(leapCount / total * 100) : 0,
+        stepPercent: total > 0 ? Math.round(stepCount / total * 100) : 0,
+        intervals: intervals,
+        directions: directions
+    };
+}
+
+// ---------------------------------------------------------------------------
+//  Texture classification
+// ---------------------------------------------------------------------------
+
+// Classify the texture of a passage.
+// events: array of { pitchClasses, pitches, ... }.
+function classifyTexture(events) {
+    if (!events || events.length === 0) return "silent";
+
+    var totalVoices = 0;
+    var singleVoiceCount = 0;
+    var rhythmicUniformity = 0;
+
+    for (var i = 0; i < events.length; i++) {
+        var nv = (events[i].pitches || events[i].pitchClasses || []).length;
+        totalVoices += nv;
+        if (nv === 1) singleVoiceCount++;
+        // Check if all voices share same rhythm (simplified: same tick/duration).
+        if (nv > 1) rhythmicUniformity++;
+    }
+
+    var avgVoices = totalVoices / events.length;
+    var singleRatio = singleVoiceCount / events.length;
+
+    if (singleRatio > 0.8) return "monophonic";
+    if (avgVoices >= 2 && rhythmicUniformity / events.length > 0.7) return "homophonic";
+    if (avgVoices >= 2) return "polyphonic";
+    return "mixed";
+}
+
+// ---------------------------------------------------------------------------
+//  Form detection (simple heuristic)
+// ---------------------------------------------------------------------------
+
+// Detect basic musical form from cadence and key data.
+// sections: array of { startMeasure, endMeasure, key, cadenceType }.
+function detectForm(sections) {
+    if (!sections || sections.length === 0) return { form: "unknown", description: "No sections provided." };
+    if (sections.length === 1) return { form: "one-part", description: "Single section." };
+
+    var firstKey = sections[0].key ? sections[0].key.tonicPc : -1;
+    var lastKey = sections[sections.length - 1].key ? sections[sections.length - 1].key.tonicPc : -1;
+    var returnsToHome = (firstKey === lastKey);
+
+    if (sections.length === 2) {
+        if (returnsToHome) return { form: "binary-rounded", description: "Two sections, returns to home key." };
+        return { form: "binary", description: "Two sections (A–B)." };
+    }
+
+    if (sections.length === 3) {
+        var midKey = sections[1].key ? sections[1].key.tonicPc : -1;
+        if (firstKey === lastKey && midKey !== firstKey) {
+            return { form: "ternary", description: "A–B–A form (three sections, first/last share key)." };
+        }
+        if (firstKey === lastKey && midKey === firstKey) {
+            return { form: "strophic", description: "Three sections in same key." };
+        }
+    }
+
+    // Check for rondo patterns (A B A C A...).
+    var homeAppearances = 0;
+    for (var i = 0; i < sections.length; i++) {
+        if (sections[i].key && sections[i].key.tonicPc === firstKey) homeAppearances++;
+    }
+    if (homeAppearances >= 3 && sections.length >= 5) {
+        return { form: "rondo", description: "Rondo-like (home key returns " + homeAppearances + " times)." };
+    }
+
+    if (returnsToHome) {
+        return { form: "rounded", description: sections.length + " sections, returns to home key." };
+    }
+    return { form: "through-composed", description: sections.length + " sections, no key return." };
+}
+
+// ---------------------------------------------------------------------------
+//  Cadential 6/4 detection
+// ---------------------------------------------------------------------------
+
+// Detect cadential 6/4 chords (I6/4 preceding V at cadences).
+// Returns info if the chord is a cadential 6/4 in context.
+function detectCadential64(chord, nextChord, key) {
+    if (!chord || !nextChord || !key) return null;
+    // Cadential 6/4: root = tonic (I), second inversion (6/4 = inversion 2),
+    // followed by V or V7.
+    if (chord.rootPc !== key.tonicPc) return null;
+    if (chord.inversion !== 2) return null;
+
+    var nextDegree = mod(nextChord.rootPc - key.tonicPc, 12);
+    if (nextDegree !== 7) return null; // Must resolve to V.
+
+    return {
+        type: "cadential-64",
+        description: "Cadential 6/4 (I64 → V) in " + keyName(key),
+        resolvedTo: chordLabel(nextChord)
+    };
+}
+
+// ---------------------------------------------------------------------------
+//  Twelve-tone / serial analysis
+// ---------------------------------------------------------------------------
+
+// Given a twelve-tone row (array of 12 pitch classes), compute all basic transformations.
+function computeRowForms(row) {
+    if (!row || row.length !== 12) return null;
+
+    var P0 = [];
+    for (var i = 0; i < 12; i++) P0.push(mod(row[i], 12));
+
+    // Inversion: invert intervals from first note.
+    var I0 = [P0[0]];
+    for (var j = 1; j < 12; j++) {
+        I0.push(mod(P0[0] - (P0[j] - P0[0]), 12));
+    }
+
+    // Retrograde.
+    var R0 = P0.slice().reverse();
+
+    // Retrograde-Inversion.
+    var RI0 = I0.slice().reverse();
+
+    // Generate all transpositions.
+    var matrix = { P: [], I: [], R: [], RI: [] };
+    for (var t = 0; t < 12; t++) {
+        matrix.P[t] = [];
+        matrix.I[t] = [];
+        matrix.R[t] = [];
+        matrix.RI[t] = [];
+        for (var n = 0; n < 12; n++) {
+            matrix.P[t].push(mod(P0[n] + t, 12));
+            matrix.I[t].push(mod(I0[n] + t, 12));
+            matrix.R[t].push(mod(R0[n] + t, 12));
+            matrix.RI[t].push(mod(RI0[n] + t, 12));
+        }
+    }
+
+    return { P0: P0, I0: I0, R0: R0, RI0: RI0, matrix: matrix };
+}
+
+// Check if a sequence of pitch classes matches any row form.
+// row: the original 12-tone row, pcs: sequence to check.
+function findRowForm(row, pcs) {
+    if (!row || !pcs || pcs.length < 3) return null;
+    var forms = computeRowForms(row);
+    if (!forms) return null;
+
+    var types = ["P", "I", "R", "RI"];
+    for (var ti = 0; ti < types.length; ti++) {
+        for (var t = 0; t < 12; t++) {
+            var rowForm = forms.matrix[types[ti]][t];
+            var match = true;
+            for (var i = 0; i < pcs.length && i < 12; i++) {
+                if (mod(pcs[i], 12) !== rowForm[i]) { match = false; break; }
+            }
+            if (match) {
+                return { type: types[ti], transposition: t, label: types[ti] + t };
+            }
+        }
+    }
+    return null;
+}
+
+// ---------------------------------------------------------------------------
+//  Chord-scale theory (jazz)
+// ---------------------------------------------------------------------------
+
+// For a given chord, suggest compatible scales.
+var CHORD_SCALE_MAP = {
+    "maj":    ["ionian", "lydian"],
+    "min":    ["dorian", "aeolian", "phrygian"],
+    "7":      ["mixolydian", "lydian-dominant"],
+    "maj7":   ["ionian", "lydian"],
+    "min7":   ["dorian", "aeolian"],
+    "m7b5":   ["locrian", "locrian-natural-2"],
+    "dim7":   ["whole-half-diminished"],
+    "dim":    ["whole-half-diminished"],
+    "aug":    ["whole-tone", "lydian-augmented"],
+    "aug7":   ["whole-tone", "altered"],
+    "min6":   ["dorian", "melodic-minor"],
+    "6":      ["ionian", "lydian"],
+    "sus4":   ["mixolydian"],
+    "7sus4":  ["mixolydian"],
+    "9":      ["mixolydian"],
+    "maj9":   ["ionian", "lydian"],
+    "min9":   ["dorian", "aeolian"],
+    "minMaj7": ["melodic-minor"]
+};
+
+function suggestChordScales(chord) {
+    if (!chord) return [];
+    var scales = CHORD_SCALE_MAP[chord.quality] || [];
+    var result = [];
+    for (var i = 0; i < scales.length; i++) {
+        result.push({ scaleName: scales[i], rootPc: chord.rootPc,
+                      rootName: pcToName(chord.rootPc, false) });
+    }
+    return result;
+}
+
+// ---------------------------------------------------------------------------
+//  Harmonic tension mapping
+// ---------------------------------------------------------------------------
+
+// Assign a tension score to each event based on dissonance and chromatic content.
+function computeHarmonicTension(events, key) {
+    var results = [];
+    for (var i = 0; i < events.length; i++) {
+        var ev = events[i];
+        var chord = ev.chord || identifyChord(ev.pitchClasses || [], ev.bassPc);
+        var tension = 0;
+
+        if (chord) {
+            // Dissonance from chord type.
+            if (chord.quality === "dim7" || chord.quality === "m7b5") tension += 4;
+            else if (chord.quality === "dim" || chord.quality === "aug") tension += 3;
+            else if (chord.quality === "7" || chord.quality === "aug7") tension += 2;
+            else if (chord.quality === "min7" || chord.quality === "maj7") tension += 1;
+
+            // Chromatic content.
+            if (key && chordIsChromatic(chord, key)) tension += 2;
+
+            // Extras (non-chord tones in the sonority).
+            tension += (chord.extras || 0);
+
+            // Inversion adds mild tension.
+            if (chord.inversion > 0) tension += chord.inversion * 0.5;
+        } else {
+            tension = 3; // Unrecognised sonority is moderately tense.
+        }
+
+        results.push({
+            measure: ev.measure || 1,
+            tick: ev.tick,
+            tension: Math.round(tension * 10) / 10,
+            chord: chord ? chordLabel(chord) : "?"
+        });
+    }
+    return results;
+}
+
+// ---------------------------------------------------------------------------
+//  Augmented sixth chord classification (detailed types)
+// ---------------------------------------------------------------------------
+
+// Classify augmented 6th chords: Italian (It+6), French (Fr+6), German (Ger+6).
+function classifyAugmentedSixth(chordOrPcs, key) {
+    if (!chordOrPcs || !key) return null;
+    var pcs;
+    if (Array.isArray(chordOrPcs)) {
+        pcs = chordOrPcs;
+    } else {
+        pcs = chordOrPcs.chordPcs || [];
+    }
+    if (pcs.length < 3) return null;
+
+    // The augmented 6th interval is between b6 and #4 of the key.
+    var b6 = mod(key.tonicPc + 8, 12); // flat 6 in major
+    var sharp4 = mod(key.tonicPc + 6, 12); // raised 4 / enharmonic to b5
+
+    if (!contains(pcs, b6) || !contains(pcs, sharp4)) return null;
+
+    var tonic = key.tonicPc;
+    var hasOne = contains(pcs, tonic);
+    var hasTwo = contains(pcs, mod(tonic + 2, 12));
+    var hasThree = contains(pcs, mod(tonic + (key.mode === "minor" ? 3 : 4), 12));
+
+    if (hasOne && !hasTwo && pcs.length === 3) {
+        return { type: "It+6", description: "Italian augmented sixth (It+6)" };
+    }
+    if (hasTwo && pcs.length >= 4) {
+        return { type: "Fr+6", description: "French augmented sixth (Fr+6)" };
+    }
+    if (hasThree && pcs.length >= 4) {
+        return { type: "Ger+6", description: "German augmented sixth (Ger+6)" };
+    }
+    if (hasOne && pcs.length >= 4) {
+        return { type: "Ger+6", description: "German augmented sixth (Ger+6)" };
+    }
+
+    return { type: "Aug6", description: "Augmented sixth chord (unclassified)" };
+}
+
+// ---------------------------------------------------------------------------
+//  Parallel / planing detection
+// ---------------------------------------------------------------------------
+
+// Detect parallel chord motion (planing): consecutive chords of the same quality
+// moving by the same interval.
+function detectPlaning(events, minLength) {
+    var results = [];
+    if (!events || events.length < 3) return results;
+    if (!minLength) minLength = 3;
+
+    // Resolve chords.
+    var chords = [];
+    for (var i = 0; i < events.length; i++) {
+        chords.push(events[i].chord || identifyChord(events[i].pitchClasses || [], events[i].bassPc));
+    }
+
+    var runStart = 0;
+    for (var j = 2; j < chords.length; j++) {
+        if (!chords[j] || !chords[j - 1] || !chords[j - 2]) { runStart = j; continue; }
+        var q1 = chords[j - 2].quality;
+        var q2 = chords[j - 1].quality;
+        var q3 = chords[j].quality;
+        var int1 = mod(chords[j - 1].rootPc - chords[j - 2].rootPc, 12);
+        var int2 = mod(chords[j].rootPc - chords[j - 1].rootPc, 12);
+
+        if (q1 === q2 && q2 === q3 && int1 === int2 && int1 !== 0) {
+            // Part of a planing run.
+        } else {
+            var runLen = j - runStart;
+            if (runLen >= minLength && runStart < j - 1) {
+                results.push({
+                    startIndex: runStart, endIndex: j - 1,
+                    quality: chords[runStart].quality,
+                    interval: mod(chords[runStart + 1].rootPc - chords[runStart].rootPc, 12),
+                    startMeasure: events[runStart].measure || 1,
+                    endMeasure: events[j - 1].measure || 1,
+                    description: "Planing: " + (j - runStart) + " " + chords[runStart].quality +
+                                 " chords in parallel motion"
+                });
+            }
+            runStart = j - 1;
+        }
+    }
+    // Check final run.
+    var finalLen = chords.length - runStart;
+    if (finalLen >= minLength && runStart < chords.length - 1 &&
+        chords[runStart] && chords[runStart + 1]) {
+        results.push({
+            startIndex: runStart, endIndex: chords.length - 1,
+            quality: chords[runStart].quality,
+            interval: mod(chords[runStart + 1].rootPc - chords[runStart].rootPc, 12),
+            startMeasure: events[runStart].measure || 1,
+            endMeasure: events[chords.length - 1].measure || 1,
+            description: "Planing: " + finalLen + " " + chords[runStart].quality +
+                         " chords in parallel motion"
+        });
+    }
+
+    return results;
+}
+
+// ---------------------------------------------------------------------------
+//  Hemiola detection
+// ---------------------------------------------------------------------------
+
+// Detect hemiola: a rhythmic device where 3×2 becomes 2×3 or vice versa.
+// durations: array of tick durations for consecutive notes.
+// beatsPerMeasure: the meter numerator.
+function detectHemiola(durations, beatsPerMeasure) {
+    var results = [];
+    if (!durations || durations.length < 4 || !beatsPerMeasure) return results;
+
+    // In 3/4 time, a hemiola groups six eighth notes as 3 groups of 2 instead of 2 groups of 3.
+    // In 6/8, hemiola groups as 3+3 instead of 2+2+2.
+    // We look for consistent durations that form the "other" grouping.
+    var ticksPerBeat = 480; // Standard MIDI quarter note.
+    var measureTicks = ticksPerBeat * beatsPerMeasure;
+
+    for (var i = 0; i < durations.length - 2; i++) {
+        // Look for 3 equal durations that together span a different grouping than the meter.
+        if (durations[i] === durations[i + 1] && durations[i + 1] === durations[i + 2]) {
+            var groupTicks = durations[i] * 3;
+            // If the 3-group crosses the normal beat grouping.
+            if (beatsPerMeasure === 3 && durations[i] === ticksPerBeat * 2 / 3) {
+                results.push({ startIndex: i, length: 3, type: "hemiola-3-to-2",
+                               description: "Hemiola: 3 groups of 2 in triple meter" });
+            } else if (beatsPerMeasure === 6 && groupTicks === measureTicks) {
+                results.push({ startIndex: i, length: 3, type: "hemiola-2-to-3",
+                               description: "Hemiola: 2 groups of 3 in compound meter" });
+            }
+        }
+    }
+    return results;
+}
+
+// ---------------------------------------------------------------------------
+//  Linear intervallic patterns (LIPs)
+// ---------------------------------------------------------------------------
+
+// Detect linear intervallic patterns (e.g., 10-10, 6-6, 10-6 alternating)
+// between two voice lines.
+// upperPitches, lowerPitches: arrays of MIDI pitches (same length).
+function detectLinearIntervallic(upperPitches, lowerPitches, minLength) {
+    var results = [];
+    if (!upperPitches || !lowerPitches) return results;
+    var len = Math.min(upperPitches.length, lowerPitches.length);
+    if (len < 3) return results;
+    if (!minLength) minLength = 3;
+
+    // Compute intervals (mod 12, but keep compound sense).
+    var intervals = [];
+    for (var i = 0; i < len; i++) {
+        intervals.push(mod(upperPitches[i] - lowerPitches[i], 12));
+    }
+
+    // Look for repeated single-interval patterns (e.g., all 10ths = interval 10 mod 12 → 10 or 3).
+    var runStart = 0;
+    for (var j = 1; j <= intervals.length; j++) {
+        if (j < intervals.length && intervals[j] === intervals[runStart]) continue;
+        var runLen = j - runStart;
+        if (runLen >= minLength) {
+            var ivName = intervals[runStart];
+            results.push({
+                startIndex: runStart, endIndex: j - 1, length: runLen,
+                pattern: ivName + "-" + ivName,
+                description: "LIP: parallel " + ivName + "ths (" + runLen + " beats)"
+            });
+        }
+        runStart = j;
+    }
+
+    // Look for alternating patterns (e.g., 10-6-10-6).
+    if (intervals.length >= 4) {
+        var altStart = 0;
+        for (var k = 2; k <= intervals.length; k++) {
+            var matches = (k < intervals.length &&
+                          intervals[k] === intervals[k - 2]);
+            if (!matches) {
+                var altLen = k - altStart;
+                if (altLen >= minLength && intervals[altStart] !== intervals[altStart + 1]) {
+                    results.push({
+                        startIndex: altStart, endIndex: k - 1, length: altLen,
+                        pattern: intervals[altStart] + "-" + intervals[altStart + 1],
+                        description: "LIP: alternating " + intervals[altStart] + "-" +
+                                     intervals[altStart + 1] + " (" + altLen + " beats)"
+                    });
+                }
+                altStart = k - 1;
+            }
+        }
+    }
+
+    return results;
+}
+
+// ---------------------------------------------------------------------------
+//  Extended colors for new features
+// ---------------------------------------------------------------------------
+
+var COLORS_EXT2 = {
+    counterpoint: "#880e4f",  // dark pink
+    contour: "#1a237e",       // indigo
+    texture: "#004d40",       // dark teal
+    form: "#311b92",          // deep purple
+    serial: "#bf360c",        // deep orange
+    chordScale: "#0d47a1",    // blue
+    tension: "#e65100",       // orange
+    aug6: "#ad1457",          // pink
+    planing: "#00695c",       // teal green
+    crossRelation: "#d50000", // red
+    cadential64: "#2e7d32",   // green
+    lip: "#5d4037"            // brown
+};
+
+// ---------------------------------------------------------------------------
 //  Enhanced aggregate analysis (add new detections to analyzeProgression)
 // ---------------------------------------------------------------------------
 
@@ -1398,6 +2030,25 @@ if (typeof module !== "undefined" && module.exports) {
         classifyCommonToneDim7: classifyCommonToneDim7,
         suggestEnharmonic: suggestEnharmonic,
         analyzePhraseStructure: analyzePhraseStructure,
-        COLORS_EXT: COLORS_EXT
+        COLORS_EXT: COLORS_EXT,
+        // Phase 2 exports
+        VOICE_RANGES: VOICE_RANGES,
+        checkSATBRanges: checkSATBRanges,
+        checkCounterpoint: checkCounterpoint,
+        detectCrossRelations: detectCrossRelations,
+        analyzeMelodicContour: analyzeMelodicContour,
+        classifyTexture: classifyTexture,
+        detectForm: detectForm,
+        detectCadential64: detectCadential64,
+        computeRowForms: computeRowForms,
+        findRowForm: findRowForm,
+        CHORD_SCALE_MAP: CHORD_SCALE_MAP,
+        suggestChordScales: suggestChordScales,
+        computeHarmonicTension: computeHarmonicTension,
+        classifyAugmentedSixth: classifyAugmentedSixth,
+        detectPlaning: detectPlaning,
+        detectHemiola: detectHemiola,
+        detectLinearIntervallic: detectLinearIntervallic,
+        COLORS_EXT2: COLORS_EXT2
     };
 }
