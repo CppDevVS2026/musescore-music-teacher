@@ -39,6 +39,10 @@ MusicTeacher/
   serialAnalysis.qml       Twelve-Tone / Serial Analysis
   chordScales.qml          Chord-Scale Suggester (jazz) + Tension Map
   planingDetector.qml      Planing & Linear Intervallic Patterns
+  secondaryChains.qml      Secondary Dominant Chains & Applied Network
+  modeMixture.qml           Mode Mixture & Prolongation Analyzer
+  rhythmAnalysis.qml        Rhythm & Syncopation Analyzer
+  reductionAnalysis.qml     Reduction & Structural Analysis
   practiceChunker.qml      Practice Chunker        (focus aid)
   focusTimer.qml           Focus Practice Timer    (focus aid)
   colorCoding.qml          Color Coding            (focus aid)
@@ -72,6 +76,10 @@ test/
 | **Serial Analysis** | Twelve-tone row analysis: derives P0 from the first 12 distinct pitch classes, computes all 48 row forms (P/I/R/RI × 12 transpositions), searches the score for row-form matches. |
 | **Chord-Scale Suggester** | Jazz chord-scale theory: suggests compatible scales for each chord (ionian, dorian, mixolydian, etc.), maps harmonic tension across the piece, and classifies augmented sixth chords (It+6, Fr+6, Ger+6). |
 | **Planing & LIP Detector** | Detects parallel chord motion (planing/parallelism), linear intervallic patterns (10-10, 6-6, alternating), and hemiola rhythmic patterns. |
+| **Secondary Chains** | Traces chains of secondary dominants (V/x → x → …) and builds an applied-chord network showing which scale degrees are targeted by applied chords. |
+| **Mode Mixture** | Mode mixture catalog (borrowed chords from parallel minor: iv, bVI, bVII, etc.), prolongation patterns (neighbor/passing embellishments), and chord substitution classification. |
+| **Rhythm Analysis** | Syncopation detection (weak-beat attacks sustaining through strong beats), metric displacement analysis, and voice independence scoring (contrary/oblique/similar/parallel motion ratios). |
+| **Reduction Analysis** | Structural tone identification (chord tones vs embellishments), aggregate completion tracking (12-tone saturation), voice-leading efficiency measurement, melodic interval-class content, and harmonic function distribution (T/S/D percentages). |
 
 ### Focus / ADHD practice aids
 
@@ -102,7 +110,9 @@ test/
   CT°7 **amber**, set-class labels **indigo**, counterpoint issues **dark pink**,
   cross-relations **red**, form labels **deep purple**, serial row-forms **deep
   orange**, chord-scales **blue**, tension peaks **orange**, augmented sixths
-  **pink**, planing **teal green**, LIPs **brown**.
+  **pink**, planing **teal green**, LIPs **brown**, secondary chains **purple**,
+  mode mixture **amber-yellow**, prolongation **olive**, syncopation **pink**,
+  voice independence **cyan**, structural tones **amber**, aggregate **dark green**.
 - The analysis plugins modify the score (inside a single undo step) — press
   **Ctrl+Z** to remove all annotations at once.
 

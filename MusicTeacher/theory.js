@@ -1949,6 +1949,464 @@ function detectLinearIntervallic(upperPitches, lowerPitches, minLength) {
 }
 
 // ---------------------------------------------------------------------------
+//  Secondary dominant chains / applied chord network
+// ---------------------------------------------------------------------------
+
+// Trace chains of secondary dominants (V/x → x → ...).
+// events: array with .chord or .pitchClasses/.bassPc, key: detected key.
+function traceSecondaryChain(events, key) {
+    if (!events || events.length < 2 || !key) return [];
+    var chains = [];
+    var currentChain = [];
+
+    for (var i = 0; i < events.length - 1; i++) {
+        var chord = events[i].chord || identifyChord(events[i].pitchClasses || [], events[i].bassPc);
+        var next = events[i + 1].chord || identifyChord(events[i + 1].pitchClasses || [], events[i + 1].bassPc);
+        if (!chord || !next) {
+            if (currentChain.length >= 2) chains.push(currentChain.slice());
+            currentChain = [];
+            continue;
+        }
+        var secDom = classifySecondaryDominant(chord, next, key);
+        if (secDom) {
+            if (currentChain.length === 0) currentChain.push({ index: i, chord: chord, label: secDom.label });
+            currentChain.push({ index: i + 1, chord: next, label: romanNumeral(next, key) });
+        } else {
+            if (currentChain.length >= 2) chains.push(currentChain.slice());
+            currentChain = [];
+        }
+    }
+    if (currentChain.length >= 2) chains.push(currentChain.slice());
+    return chains;
+}
+
+// Build applied-chord network: for each scale degree, which applied dominants target it.
+function buildAppliedChordNetwork(events, key) {
+    if (!events || !key) return {};
+    var network = {};
+    for (var i = 0; i < events.length - 1; i++) {
+        var chord = events[i].chord || identifyChord(events[i].pitchClasses || [], events[i].bassPc);
+        var next = events[i + 1].chord || identifyChord(events[i + 1].pitchClasses || [], events[i + 1].bassPc);
+        if (!chord || !next) continue;
+        var secDom = classifySecondaryDominant(chord, next, key);
+        if (secDom) {
+            var targetDeg = scaleDegree(next.rootPc, key);
+            if (!network[targetDeg]) network[targetDeg] = [];
+            network[targetDeg].push({
+                index: i,
+                appliedChord: secDom.label,
+                measure: events[i].measure || 1
+            });
+        }
+    }
+    return network;
+}
+
+// ---------------------------------------------------------------------------
+//  Mode mixture catalog
+// ---------------------------------------------------------------------------
+
+// Full catalog of mode mixture chords for a major key.
+var MODE_MIXTURE_CATALOG = {
+    major: [
+        { degree: 1, quality: "min", symbol: "i",    borrowed: "minor" },
+        { degree: 2, quality: "dim", symbol: "ii°",  borrowed: "minor" },
+        { degree: 3, quality: "maj", symbol: "bIII", borrowed: "minor", flat: true },
+        { degree: 4, quality: "min", symbol: "iv",   borrowed: "minor" },
+        { degree: 5, quality: "min", symbol: "v",    borrowed: "minor" },
+        { degree: 6, quality: "maj", symbol: "bVI",  borrowed: "minor", flat: true },
+        { degree: 7, quality: "maj", symbol: "bVII", borrowed: "minor", flat: true }
+    ]
+};
+
+// Check if a chord is a mode mixture chord and return its catalog entry.
+function classifyModeMixture(chord, key) {
+    if (!chord || !key || key.mode !== "major") return null;
+    var deg = scaleDegree(chord.rootPc, key);
+    var catalog = MODE_MIXTURE_CATALOG.major;
+    for (var i = 0; i < catalog.length; i++) {
+        var entry = catalog[i];
+        var expectedRootPc;
+        if (entry.flat) {
+            // Flat scale degrees from minor.
+            var minorScale = [0, 2, 3, 5, 7, 8, 10]; // Natural minor intervals.
+            expectedRootPc = mod(key.tonicPc + minorScale[entry.degree - 1], 12);
+        } else {
+            var majorScale = [0, 2, 4, 5, 7, 9, 11];
+            expectedRootPc = mod(key.tonicPc + majorScale[entry.degree - 1], 12);
+        }
+        if (chord.rootPc === expectedRootPc && chord.quality === entry.quality) {
+            return { symbol: entry.symbol, borrowed: entry.borrowed,
+                     description: entry.symbol + " (borrowed from " + entry.borrowed + ")" };
+        }
+    }
+    return null;
+}
+
+// ---------------------------------------------------------------------------
+//  Prolongation / embellishment classification
+// ---------------------------------------------------------------------------
+
+// Classify harmonic prolongation: a chord that elaborates or extends another.
+// Checks if a chord between two identical chords is a neighbor, passing, or pedal embellishment.
+function classifyProlongation(prevChord, currChord, nextChord, key) {
+    if (!prevChord || !currChord || !nextChord || !key) return null;
+
+    // Neighbor chord: same chord on both sides.
+    if (prevChord.rootPc === nextChord.rootPc && prevChord.quality === nextChord.quality) {
+        var interval = mod(currChord.rootPc - prevChord.rootPc, 12);
+        if (interval <= 2 || interval >= 10) {
+            return { type: "neighbor", description: "Neighbor chord prolonging " + chordLabel(prevChord) };
+        }
+        return { type: "embellishment", description: "Embellishment within " + chordLabel(prevChord) + " prolongation" };
+    }
+
+    // Passing chord: root moves stepwise between prev and next.
+    var prevToNext = mod(nextChord.rootPc - prevChord.rootPc, 12);
+    var prevToCurr = mod(currChord.rootPc - prevChord.rootPc, 12);
+    if ((prevToNext === 4 || prevToNext === 3 || prevToNext === 2) &&
+        prevToCurr > 0 && prevToCurr < prevToNext) {
+        return { type: "passing", description: "Passing chord between " +
+                 chordLabel(prevChord) + " and " + chordLabel(nextChord) };
+    }
+
+    return null;
+}
+
+// ---------------------------------------------------------------------------
+//  Metric displacement / syncopation detection
+// ---------------------------------------------------------------------------
+
+// Detect syncopation: notes that start on weak beats and sustain through strong beats.
+// events: array with .tick, .duration, .measure fields.
+// ticksPerBeat: ticks per quarter note (typically 480).
+// beatsPerMeasure: time signature numerator.
+function detectSyncopation(events, ticksPerBeat, beatsPerMeasure) {
+    var results = [];
+    if (!events || events.length === 0) return results;
+    if (!ticksPerBeat) ticksPerBeat = 480;
+    if (!beatsPerMeasure) beatsPerMeasure = 4;
+    var measureTicks = ticksPerBeat * beatsPerMeasure;
+
+    for (var i = 0; i < events.length; i++) {
+        var ev = events[i];
+        var tick = ev.tick || 0;
+        var dur = ev.duration || ticksPerBeat;
+        var beatInMeasure = (tick % measureTicks) / ticksPerBeat;
+        var endBeat = beatInMeasure + (dur / ticksPerBeat);
+
+        // Strong beats: beat 0 and beat 2 (in 4/4), or beat 0 (in 3/4).
+        var isWeakStart = false;
+        if (beatsPerMeasure === 4) {
+            isWeakStart = (Math.abs(beatInMeasure - 1) < 0.01 || Math.abs(beatInMeasure - 3) < 0.01);
+        } else if (beatsPerMeasure === 3) {
+            isWeakStart = (Math.abs(beatInMeasure - 1) < 0.01 || Math.abs(beatInMeasure - 2) < 0.01);
+        } else {
+            isWeakStart = (beatInMeasure % 2 !== 0);
+        }
+
+        // Syncopation: starts on weak beat and extends past next strong beat.
+        var crossesStrong = (endBeat >= beatInMeasure + 1.5);
+        if (isWeakStart && crossesStrong) {
+            results.push({
+                index: i,
+                measure: ev.measure || 1,
+                beatInMeasure: Math.round(beatInMeasure * 100) / 100,
+                description: "Syncopation at m" + (ev.measure || 1) + " beat " +
+                             (Math.round(beatInMeasure * 100) / 100 + 1)
+            });
+        }
+    }
+    return results;
+}
+
+// ---------------------------------------------------------------------------
+//  Voice independence scoring
+// ---------------------------------------------------------------------------
+
+// Score how independent multiple voices are (0 = unison/parallel, 1 = fully independent).
+// voices: array of arrays of MIDI pitches, each inner array = one voice's pitch sequence.
+function scoreVoiceIndependence(voices) {
+    if (!voices || voices.length < 2) return { score: 1, details: {} };
+
+    var len = 0;
+    for (var v = 0; v < voices.length; v++) {
+        if (voices[v].length > len) len = voices[v].length;
+    }
+    if (len < 2) return { score: 1, details: {} };
+
+    var contraryCount = 0;
+    var similarCount = 0;
+    var parallelCount = 0;
+    var obliqueCount = 0;
+    var totalPairs = 0;
+
+    for (var i = 0; i < voices.length - 1; i++) {
+        for (var j = i + 1; j < voices.length; j++) {
+            for (var k = 1; k < len; k++) {
+                if (k >= voices[i].length || k >= voices[j].length) continue;
+                var dI = voices[i][k] - voices[i][k - 1];
+                var dJ = voices[j][k] - voices[j][k - 1];
+                totalPairs++;
+                if (dI === 0 && dJ === 0) parallelCount++;
+                else if (dI === 0 || dJ === 0) obliqueCount++;
+                else if ((dI > 0 && dJ < 0) || (dI < 0 && dJ > 0)) contraryCount++;
+                else if (dI === dJ) parallelCount++;
+                else similarCount++;
+            }
+        }
+    }
+
+    // Score: contrary/oblique = high independence, parallel = low.
+    var score = totalPairs > 0
+        ? (contraryCount * 1.0 + obliqueCount * 0.7 + similarCount * 0.4 + parallelCount * 0.1) / totalPairs
+        : 1;
+    return {
+        score: Math.round(score * 100) / 100,
+        details: {
+            contrary: contraryCount,
+            oblique: obliqueCount,
+            similar: similarCount,
+            parallel: parallelCount,
+            total: totalPairs
+        }
+    };
+}
+
+// ---------------------------------------------------------------------------
+//  Chord substitution analysis
+// ---------------------------------------------------------------------------
+
+// Given two chords, classify the substitution relationship (if any).
+function classifySubstitution(original, substitute, key) {
+    if (!original || !substitute || !key) return null;
+    var origDeg = scaleDegree(original.rootPc, key);
+    var subDeg = scaleDegree(substitute.rootPc, key);
+
+    // Diatonic substitution: chords sharing 2+ common tones.
+    var commonTones = 0;
+    var origPcs = original.chordPcs || [];
+    var subPcs = substitute.chordPcs || [];
+    for (var i = 0; i < origPcs.length; i++) {
+        for (var j = 0; j < subPcs.length; j++) {
+            if (origPcs[i] === subPcs[j]) commonTones++;
+        }
+    }
+
+    // Tritone substitution (already handled elsewhere but included for completeness).
+    var rootDiff = mod(substitute.rootPc - original.rootPc, 12);
+    if (rootDiff === 6 && original.quality === "7" && substitute.quality === "7") {
+        return { type: "tritone-sub", commonTones: commonTones,
+                 description: "Tritone substitution: " + chordLabel(substitute) + " for " + chordLabel(original) };
+    }
+
+    // Relative major/minor substitution (root a minor 3rd apart).
+    if ((rootDiff === 3 || rootDiff === 9) && commonTones >= 2) {
+        return { type: "relative", commonTones: commonTones,
+                 description: "Relative substitution: " + chordLabel(substitute) + " for " + chordLabel(original) };
+    }
+
+    // Diatonic substitution (same function, 2+ common tones).
+    if (commonTones >= 2) {
+        return { type: "diatonic", commonTones: commonTones,
+                 description: "Diatonic substitution (" + commonTones + " common tones): " +
+                              chordLabel(substitute) + " for " + chordLabel(original) };
+    }
+
+    return null;
+}
+
+// ---------------------------------------------------------------------------
+//  Aggregate completion tracking (for post-tonal analysis)
+// ---------------------------------------------------------------------------
+
+// Track how quickly all 12 pitch classes are presented (aggregate completion).
+// pitchClasses: flat array of pitch classes in order of appearance.
+function trackAggregateCompletion(pitchClasses) {
+    if (!pitchClasses || pitchClasses.length === 0) return { completionIndex: -1, segments: [] };
+
+    var seen = {};
+    var count = 0;
+    var segments = [];
+    var segStart = 0;
+
+    for (var i = 0; i < pitchClasses.length; i++) {
+        var pc = mod(pitchClasses[i], 12);
+        if (!seen[pc]) {
+            seen[pc] = true;
+            count++;
+        }
+        if (count === 12) {
+            segments.push({ start: segStart, end: i, length: i - segStart + 1 });
+            seen = {};
+            count = 0;
+            segStart = i + 1;
+        }
+    }
+
+    return {
+        completionIndex: segments.length > 0 ? segments[0].end : -1,
+        segments: segments,
+        totalAggregates: segments.length,
+        pcsCovered: count < 12 ? count : 12
+    };
+}
+
+// ---------------------------------------------------------------------------
+//  Voice-leading efficiency (parsimony)
+// ---------------------------------------------------------------------------
+
+// Measure voice-leading efficiency between two chords.
+// Returns total semitones of motion (lower = smoother).
+function voiceLeadingEfficiency(prevPitches, currPitches) {
+    if (!prevPitches || !currPitches) return null;
+    if (prevPitches.length === 0 || currPitches.length === 0) return null;
+
+    // Use pitch-class comparison for flexibility.
+    var totalMotion = 0;
+    var len = Math.min(prevPitches.length, currPitches.length);
+    var commonTones = 0;
+    var maxMotion = 0;
+
+    // Sort both for best-case matching.
+    var prev = prevPitches.slice().sort(function(a,b){ return a - b; });
+    var curr = currPitches.slice().sort(function(a,b){ return a - b; });
+
+    for (var i = 0; i < len; i++) {
+        var motion = Math.abs(curr[i] - prev[i]);
+        totalMotion += motion;
+        if (motion === 0) commonTones++;
+        if (motion > maxMotion) maxMotion = motion;
+    }
+
+    return {
+        totalSemitones: totalMotion,
+        averageSemitones: Math.round(totalMotion / len * 100) / 100,
+        commonTones: commonTones,
+        maxMotion: maxMotion,
+        voices: len,
+        parsimonious: totalMotion <= len * 2
+    };
+}
+
+// ---------------------------------------------------------------------------
+//  Interval-class content analysis
+// ---------------------------------------------------------------------------
+
+// Compute the interval-class content of a melody (not a simultaneity).
+// pitches: array of MIDI pitches.
+function melodicIntervalClassContent(pitches) {
+    if (!pitches || pitches.length < 2) return { ic: [0,0,0,0,0,0,0], histogram: {} };
+    var ic = [0, 0, 0, 0, 0, 0, 0]; // ic0 through ic6
+    var histogram = {};
+
+    for (var i = 1; i < pitches.length; i++) {
+        var diff = Math.abs(pitches[i] - pitches[i - 1]) % 12;
+        var icVal = diff <= 6 ? diff : 12 - diff;
+        ic[icVal]++;
+        histogram[icVal] = (histogram[icVal] || 0) + 1;
+    }
+
+    // Find most common interval class.
+    var mostCommon = 0;
+    for (var j = 1; j <= 6; j++) {
+        if (ic[j] > ic[mostCommon]) mostCommon = j;
+    }
+
+    return {
+        ic: ic,
+        histogram: histogram,
+        mostCommonIC: mostCommon,
+        totalIntervals: pitches.length - 1
+    };
+}
+
+// ---------------------------------------------------------------------------
+//  Reduction / structural analysis helpers
+// ---------------------------------------------------------------------------
+
+// Identify structural tones vs embellishments in a melody.
+// pitches: MIDI pitches, durations: tick durations, key: detected key.
+function identifyStructuralTones(pitches, durations, key) {
+    if (!pitches || pitches.length === 0) return [];
+    var result = [];
+    var avgDur = 0;
+    if (durations && durations.length > 0) {
+        for (var d = 0; d < durations.length; d++) avgDur += durations[d];
+        avgDur = avgDur / durations.length;
+    }
+
+    for (var i = 0; i < pitches.length; i++) {
+        var isStructural = false;
+        var pc = mod(pitches[i], 12);
+
+        // Metric position: first and last notes are structural.
+        if (i === 0 || i === pitches.length - 1) isStructural = true;
+        // Duration: longer than average.
+        else if (durations && i < durations.length && durations[i] > avgDur * 1.2) isStructural = true;
+        // Diatonic and on a chord tone (simple heuristic).
+        else if (key && isDiatonic(pc, key)) {
+            var deg = scaleDegree(pc, key);
+            if (deg === 1 || deg === 3 || deg === 5) isStructural = true;
+        }
+
+        result.push({
+            index: i, pitch: pitches[i], pc: pc,
+            structural: isStructural,
+            type: isStructural ? "structural" : "embellishment"
+        });
+    }
+    return result;
+}
+
+// ---------------------------------------------------------------------------
+//  Harmonic function frequency / distribution
+// ---------------------------------------------------------------------------
+
+// Count how frequently each harmonic function appears in a progression.
+function harmonicFunctionDistribution(events, key) {
+    if (!events || !key) return {};
+    var dist = { tonic: 0, subdominant: 0, dominant: 0, chromatic: 0, total: 0 };
+
+    for (var i = 0; i < events.length; i++) {
+        var chord = events[i].chord || identifyChord(events[i].pitchClasses || [], events[i].bassPc);
+        if (!chord) continue;
+        dist.total++;
+        var deg = scaleDegree(chord.rootPc, key);
+        var func = harmonicFunction(deg, chord.triad);
+        if (func === "T") dist.tonic++;
+        else if (func === "S" || func === "PD") dist.subdominant++;
+        else if (func === "D") dist.dominant++;
+        else dist.chromatic++;
+    }
+
+    if (dist.total > 0) {
+        dist.tonicPercent = Math.round(dist.tonic / dist.total * 100);
+        dist.subdominantPercent = Math.round(dist.subdominant / dist.total * 100);
+        dist.dominantPercent = Math.round(dist.dominant / dist.total * 100);
+        dist.chromaticPercent = Math.round(dist.chromatic / dist.total * 100);
+    }
+    return dist;
+}
+
+// ---------------------------------------------------------------------------
+//  Extended colors for phase 3
+// ---------------------------------------------------------------------------
+
+var COLORS_EXT3 = {
+    secDomChain: "#4a148c",    // purple
+    modeMixture: "#f57f17",    // yellow-amber
+    prolongation: "#827717",   // olive
+    syncopation: "#e91e63",    // pink
+    independence: "#006064",   // cyan
+    substitution: "#3e2723",   // dark brown
+    aggregate: "#1b5e20",      // dark green
+    vlEfficiency: "#0097a7",   // teal
+    structural: "#ff6f00",     // amber
+    funcDist: "#5c6bc0"        // indigo
+};
+
+// ---------------------------------------------------------------------------
 //  Extended colors for new features
 // ---------------------------------------------------------------------------
 
@@ -2049,6 +2507,21 @@ if (typeof module !== "undefined" && module.exports) {
         detectPlaning: detectPlaning,
         detectHemiola: detectHemiola,
         detectLinearIntervallic: detectLinearIntervallic,
-        COLORS_EXT2: COLORS_EXT2
+        COLORS_EXT2: COLORS_EXT2,
+        // Phase 3 exports
+        traceSecondaryChain: traceSecondaryChain,
+        buildAppliedChordNetwork: buildAppliedChordNetwork,
+        MODE_MIXTURE_CATALOG: MODE_MIXTURE_CATALOG,
+        classifyModeMixture: classifyModeMixture,
+        classifyProlongation: classifyProlongation,
+        detectSyncopation: detectSyncopation,
+        scoreVoiceIndependence: scoreVoiceIndependence,
+        classifySubstitution: classifySubstitution,
+        trackAggregateCompletion: trackAggregateCompletion,
+        voiceLeadingEfficiency: voiceLeadingEfficiency,
+        melodicIntervalClassContent: melodicIntervalClassContent,
+        identifyStructuralTones: identifyStructuralTones,
+        harmonicFunctionDistribution: harmonicFunctionDistribution,
+        COLORS_EXT3: COLORS_EXT3
     };
 }

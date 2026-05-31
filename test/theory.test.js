@@ -1002,3 +1002,252 @@ test("detectHemiola returns empty for uniform quarter notes in 4/4", () => {
     const result = T.detectHemiola(durations, 4);
     assert.strictEqual(result.length, 0);
 });
+
+// ===================================================================
+//  PHASE 3 FEATURE TESTS
+// ===================================================================
+
+// --- Secondary dominant chains ---
+
+test("traceSecondaryChain finds a chain in C major", () => {
+    // D7 → G → C: D7 is V/V, then G is V
+    const events = [
+        { tick: 0, measure: 1, pitchClasses: [2, 6, 9, 0], bassPc: 2 },  // D7
+        { tick: 480, measure: 1, pitchClasses: [7, 11, 2], bassPc: 7 },  // G
+        { tick: 960, measure: 2, pitchClasses: [0, 4, 7], bassPc: 0 }    // C
+    ];
+    const chains = T.traceSecondaryChain(events, C_MAJOR);
+    assert.ok(chains.length > 0);
+    assert.ok(chains[0].length >= 2);
+});
+
+test("traceSecondaryChain returns empty for diatonic progression", () => {
+    const events = [
+        { tick: 0, measure: 1, pitchClasses: [0, 4, 7], bassPc: 0 },  // C
+        { tick: 480, measure: 1, pitchClasses: [5, 9, 0], bassPc: 5 }, // F
+        { tick: 960, measure: 2, pitchClasses: [0, 4, 7], bassPc: 0 }  // C
+    ];
+    const chains = T.traceSecondaryChain(events, C_MAJOR);
+    assert.strictEqual(chains.length, 0);
+});
+
+// --- Applied chord network ---
+
+test("buildAppliedChordNetwork maps target degrees", () => {
+    const events = [
+        { tick: 0, measure: 1, pitchClasses: [2, 6, 9, 0], bassPc: 2 },  // D7 (V/V)
+        { tick: 480, measure: 1, pitchClasses: [7, 11, 2], bassPc: 7 }    // G (V)
+    ];
+    const network = T.buildAppliedChordNetwork(events, C_MAJOR);
+    assert.ok(Object.keys(network).length > 0);
+});
+
+// --- Mode mixture ---
+
+test("classifyModeMixture detects iv in C major", () => {
+    // iv in C major = F minor [5, 8, 0]
+    const chord = T.identifyChord([5, 8, 0], 5);
+    const result = T.classifyModeMixture(chord, C_MAJOR);
+    assert.ok(result);
+    assert.strictEqual(result.symbol, "iv");
+});
+
+test("classifyModeMixture detects bVI in C major", () => {
+    // bVI in C major = Ab major [8, 0, 3]
+    const chord = T.identifyChord([8, 0, 3], 8);
+    const result = T.classifyModeMixture(chord, C_MAJOR);
+    assert.ok(result);
+    assert.strictEqual(result.symbol, "bVI");
+});
+
+test("classifyModeMixture returns null for diatonic chord", () => {
+    const chord = T.identifyChord([0, 4, 7], 0);
+    assert.strictEqual(T.classifyModeMixture(chord, C_MAJOR), null);
+});
+
+// --- Prolongation ---
+
+test("classifyProlongation detects neighbor chord", () => {
+    const c = T.identifyChord([0, 4, 7], 0);   // C
+    const d = T.identifyChord([2, 5, 9], 2);    // Dm
+    const c2 = T.identifyChord([0, 4, 7], 0);   // C
+    const result = T.classifyProlongation(c, d, c2, C_MAJOR);
+    assert.ok(result);
+    assert.strictEqual(result.type, "neighbor");
+});
+
+test("classifyProlongation returns null for dissimilar outer chords", () => {
+    const c = T.identifyChord([0, 4, 7], 0);
+    const d = T.identifyChord([2, 5, 9], 2);
+    const g = T.identifyChord([7, 11, 2], 7);
+    assert.strictEqual(T.classifyProlongation(c, d, g, C_MAJOR), null);
+});
+
+// --- Syncopation ---
+
+test("detectSyncopation finds syncopation on weak beat", () => {
+    const events = [
+        { tick: 480, duration: 960, measure: 1 }   // Starts on beat 2, lasts 2 beats
+    ];
+    const syncs = T.detectSyncopation(events, 480, 4);
+    assert.ok(syncs.length > 0);
+});
+
+test("detectSyncopation returns empty for on-beat notes", () => {
+    const events = [
+        { tick: 0, duration: 480, measure: 1 },     // Beat 1
+        { tick: 960, duration: 480, measure: 1 }     // Beat 3
+    ];
+    const syncs = T.detectSyncopation(events, 480, 4);
+    assert.strictEqual(syncs.length, 0);
+});
+
+// --- Voice independence ---
+
+test("scoreVoiceIndependence scores contrary motion high", () => {
+    const voices = [
+        [60, 62, 64, 65],   // Ascending
+        [72, 70, 68, 67]    // Descending (contrary)
+    ];
+    const result = T.scoreVoiceIndependence(voices);
+    assert.ok(result.score > 0.7);
+    assert.ok(result.details.contrary > 0);
+});
+
+test("scoreVoiceIndependence scores parallel motion low", () => {
+    const voices = [
+        [60, 62, 64, 65],
+        [48, 50, 52, 53]    // Parallel
+    ];
+    const result = T.scoreVoiceIndependence(voices);
+    assert.ok(result.score < 0.5);
+    assert.ok(result.details.parallel > 0);
+});
+
+// --- Chord substitution ---
+
+test("classifySubstitution detects tritone sub", () => {
+    const db7 = T.identifyChord([1, 5, 8, 11], 1);
+    const g7 = T.identifyChord([7, 11, 2, 5], 7);
+    const result = T.classifySubstitution(g7, db7, C_MAJOR);
+    assert.ok(result);
+    assert.strictEqual(result.type, "tritone-sub");
+});
+
+test("classifySubstitution detects relative substitution", () => {
+    const c = T.identifyChord([0, 4, 7], 0);   // C major
+    const am = T.identifyChord([9, 0, 4], 9);   // A minor (relative minor)
+    const result = T.classifySubstitution(c, am, C_MAJOR);
+    assert.ok(result);
+    assert.strictEqual(result.type, "relative");
+});
+
+test("classifySubstitution returns null for unrelated chords", () => {
+    const c = T.identifyChord([0, 4, 7], 0);
+    const fs = T.identifyChord([6, 10, 1], 6);  // F# major
+    const result = T.classifySubstitution(c, fs, C_MAJOR);
+    assert.strictEqual(result, null);
+});
+
+// --- Aggregate completion ---
+
+test("trackAggregateCompletion finds first completion", () => {
+    const pcs = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
+    const result = T.trackAggregateCompletion(pcs);
+    assert.strictEqual(result.completionIndex, 11);
+    assert.strictEqual(result.totalAggregates, 1);
+});
+
+test("trackAggregateCompletion reports incomplete", () => {
+    const pcs = [0, 2, 4, 5, 7];
+    const result = T.trackAggregateCompletion(pcs);
+    assert.strictEqual(result.completionIndex, -1);
+    assert.strictEqual(result.pcsCovered, 5);
+});
+
+test("trackAggregateCompletion finds multiple aggregates", () => {
+    const pcs = [0,1,2,3,4,5,6,7,8,9,10,11, 0,1,2,3,4,5,6,7,8,9,10,11];
+    const result = T.trackAggregateCompletion(pcs);
+    assert.strictEqual(result.totalAggregates, 2);
+});
+
+// --- Voice-leading efficiency ---
+
+test("voiceLeadingEfficiency measures smooth motion", () => {
+    const prev = [60, 64, 67];  // C4 E4 G4
+    const curr = [60, 65, 69];  // C4 F4 A4
+    const result = T.voiceLeadingEfficiency(prev, curr);
+    assert.ok(result);
+    assert.strictEqual(result.commonTones, 1); // C stays
+    assert.ok(result.totalSemitones <= 4);
+    assert.strictEqual(result.parsimonious, true);
+});
+
+test("voiceLeadingEfficiency measures large leaps", () => {
+    const prev = [48, 52, 55];  // C3 E3 G3
+    const curr = [60, 64, 67];  // C4 E4 G4
+    const result = T.voiceLeadingEfficiency(prev, curr);
+    assert.ok(result);
+    assert.strictEqual(result.totalSemitones, 36);
+    assert.strictEqual(result.parsimonious, false);
+});
+
+// --- Melodic interval-class content ---
+
+test("melodicIntervalClassContent analyzes a scale", () => {
+    const pitches = [60, 62, 64, 65, 67]; // C D E F G (all steps)
+    const result = T.melodicIntervalClassContent(pitches);
+    assert.ok(result);
+    assert.strictEqual(result.totalIntervals, 4);
+    // All intervals are 1 or 2 semitones (ic1 and ic2).
+    assert.ok(result.ic[1] + result.ic[2] === 4);
+});
+
+test("melodicIntervalClassContent finds most common IC", () => {
+    const pitches = [60, 67, 60, 67]; // All P5 (ic5)
+    const result = T.melodicIntervalClassContent(pitches);
+    assert.strictEqual(result.mostCommonIC, 5);
+});
+
+// --- Structural tones ---
+
+test("identifyStructuralTones marks first/last as structural", () => {
+    const pitches = [60, 62, 64, 65, 67];
+    const result = T.identifyStructuralTones(pitches, null, C_MAJOR);
+    assert.ok(result[0].structural);
+    assert.ok(result[result.length - 1].structural);
+});
+
+test("identifyStructuralTones marks chord tones as structural", () => {
+    const pitches = [60, 61, 64, 66, 67]; // C, C#, E, F#, G
+    const result = T.identifyStructuralTones(pitches, null, C_MAJOR);
+    // C(0), E(4), G(7) are chord tones (degrees 1, 3, 5)
+    assert.ok(result[0].structural);  // C = degree 1
+    assert.ok(result[2].structural);  // E = degree 3
+    assert.ok(result[4].structural);  // G = degree 5
+});
+
+// --- Harmonic function distribution ---
+
+test("harmonicFunctionDistribution counts T/S/D", () => {
+    const events = [
+        { tick: 0, measure: 1, pitchClasses: [0, 4, 7], bassPc: 0 },   // C = T
+        { tick: 480, measure: 1, pitchClasses: [5, 9, 0], bassPc: 5 },  // F = S
+        { tick: 960, measure: 2, pitchClasses: [7, 11, 2], bassPc: 7 }, // G = D
+        { tick: 1440, measure: 2, pitchClasses: [0, 4, 7], bassPc: 0 }  // C = T
+    ];
+    const dist = T.harmonicFunctionDistribution(events, C_MAJOR);
+    assert.ok(dist.tonic >= 2);
+    assert.ok(dist.subdominant >= 1);
+    assert.ok(dist.dominant >= 1);
+    assert.strictEqual(dist.total, 4);
+});
+
+test("harmonicFunctionDistribution returns percentages", () => {
+    const events = [
+        { tick: 0, measure: 1, pitchClasses: [0, 4, 7], bassPc: 0 },
+        { tick: 480, measure: 1, pitchClasses: [0, 4, 7], bassPc: 0 }
+    ];
+    const dist = T.harmonicFunctionDistribution(events, C_MAJOR);
+    assert.strictEqual(dist.tonicPercent, 100);
+});
