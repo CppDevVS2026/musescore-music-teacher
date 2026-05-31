@@ -63,7 +63,16 @@ var CHORD_TEMPLATES = [
     { quality: "min7",    intervals: [0, 3, 7, 10],  symbol: "m7",  triad: "minor" },
     { quality: "m7b5",    intervals: [0, 3, 6, 10],  symbol: "\u00f87", triad: "diminished" },
     { quality: "dim7",    intervals: [0, 3, 6, 9],   symbol: "\u00b07", triad: "diminished" },
-    { quality: "minMaj7", intervals: [0, 3, 7, 11],  symbol: "m(maj7)", triad: "minor" }
+    { quality: "minMaj7", intervals: [0, 3, 7, 11],  symbol: "m(maj7)", triad: "minor" },
+    { quality: "9",       intervals: [0, 4, 7, 10, 2], symbol: "9",      triad: "major" },
+    { quality: "maj9",    intervals: [0, 4, 7, 11, 2], symbol: "maj9",   triad: "major" },
+    { quality: "min9",    intervals: [0, 3, 7, 10, 2], symbol: "m9",     triad: "minor" },
+    { quality: "add9",    intervals: [0, 4, 7, 2],     symbol: "add9",   triad: "major", _penalty: 12 },
+    { quality: "6",       intervals: [0, 4, 7, 9],     symbol: "6",      triad: "major" },
+    { quality: "min6",    intervals: [0, 3, 7, 9],     symbol: "m6",     triad: "minor" },
+    { quality: "aug7",    intervals: [0, 4, 8, 10],    symbol: "+7",     triad: "augmented" },
+    { quality: "7sus4",   intervals: [0, 5, 7, 10],    symbol: "7sus4",  triad: "sus" },
+    { quality: "pow",     intervals: [0, 7],            symbol: "5",      triad: "power" }
 ];
 
 function uniqueSorted(arr) {
@@ -87,7 +96,7 @@ function contains(arr, v) {
 //           chordPcs, extras } or null when no triad/seventh is recognised.
 function identifyChord(pitchClasses, bassPc) {
     var pcs = uniqueSorted(pitchClasses);
-    if (pcs.length < 3) return null;
+    if (pcs.length < 2) return null;
 
     var best = null;
     for (var r = 0; r < pcs.length; r++) {
@@ -105,6 +114,7 @@ function identifyChord(pitchClasses, bassPc) {
             var extras = intervalsPresent.length - tmpl.intervals.length;
             // Prefer more specific templates (more chord tones), then fewer extras.
             var score = tmpl.intervals.length * 10 - extras;
+            if (tmpl._penalty) score -= tmpl._penalty;
             // Tie-break: for symmetric chords (e.g. dim7) favour the bass as root.
             if (typeof bassPc === "number" && root === mod(bassPc, 12)) score += 0.5;
             if (!best || score > best.score) {
@@ -695,8 +705,650 @@ function keyName(key) {
 }
 
 // ---------------------------------------------------------------------------
-//  Node.js interop (ignored by the QML engine)
+//  Extended chord templates (added 9ths, 6ths, aug7, 7sus4, power chords)
+//  are already in CHORD_TEMPLATES above.
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+//  Modulation detection (windowed key detection)
+// ---------------------------------------------------------------------------
+
+// Detect key regions across a piece using a sliding window.
+// events: array of chord events (from analyzeProgression format).
+// windowSize: number of events per window (default 6).
+// Returns array of { startTick, endTick, startMeasure, endMeasure, key, confidence }.
+function detectModulations(events, windowSize) {
+    if (!windowSize) windowSize = 6;
+    if (events.length < windowSize) {
+        var hist0 = [0,0,0,0,0,0,0,0,0,0,0,0];
+        for (var q = 0; q < events.length; q++) {
+            var pcs0 = events[q].pitchClasses || [];
+            var w0 = events[q].durationTicks || 1;
+            for (var r = 0; r < pcs0.length; r++) hist0[mod(pcs0[r], 12)] += w0;
+        }
+        var k0 = detectKey(hist0);
+        return [{ startTick: events[0].tick, endTick: events[events.length - 1].tick,
+                  startMeasure: events[0].measure || 1, endMeasure: events[events.length - 1].measure || 1,
+                  key: k0, confidence: k0.confidence }];
+    }
+
+    var regions = [];
+    var step = Math.max(1, Math.floor(windowSize / 2));
+    for (var i = 0; i <= events.length - windowSize; i += step) {
+        var hist = [0,0,0,0,0,0,0,0,0,0,0,0];
+        for (var j = i; j < i + windowSize && j < events.length; j++) {
+            var pcs = events[j].pitchClasses || [];
+            var w = events[j].durationTicks || 1;
+            for (var p = 0; p < pcs.length; p++) hist[mod(pcs[p], 12)] += w;
+        }
+        var key = detectKey(hist);
+        var endIdx = Math.min(i + windowSize - 1, events.length - 1);
+        regions.push({
+            startTick: events[i].tick, endTick: events[endIdx].tick,
+            startMeasure: events[i].measure || 1, endMeasure: events[endIdx].measure || 1,
+            key: key, confidence: key.confidence
+        });
+    }
+
+    // Merge adjacent regions with the same key.
+    var merged = [regions[0]];
+    for (var m = 1; m < regions.length; m++) {
+        var prev = merged[merged.length - 1];
+        if (regions[m].key.tonicPc === prev.key.tonicPc && regions[m].key.mode === prev.key.mode) {
+            prev.endTick = regions[m].endTick;
+            prev.endMeasure = regions[m].endMeasure;
+            prev.confidence = Math.max(prev.confidence, regions[m].confidence);
+        } else {
+            merged.push(regions[m]);
+        }
+    }
+    return merged;
+}
+
+// Identify a pivot chord that belongs to both keys at a modulation boundary.
+// prevKey, newKey: { tonicPc, mode }. chord: result of identifyChord.
+// Returns { romanInOld, romanInNew } or null.
+function findPivotChord(chord, prevKey, newKey) {
+    if (!chord) return null;
+    var rnOld = romanNumeral(chord, prevKey);
+    var rnNew = romanNumeral(chord, newKey);
+    var diatonicInOld = !rnOld.isChromatic;
+    var diatonicInNew = !rnNew.isChromatic;
+    if (diatonicInOld && diatonicInNew) {
+        return { romanInOld: rnOld.roman, romanInNew: rnNew.roman };
+    }
+    return null;
+}
+
+// ---------------------------------------------------------------------------
+//  Sequence detection
+// ---------------------------------------------------------------------------
+
+// Detect melodic/harmonic sequences (repeated intervallic patterns).
+// rootPcs: array of root pitch classes from successive chords.
+// Returns array of { startIndex, length, interval, direction, type }.
+function detectSequences(rootPcs) {
+    var results = [];
+    if (rootPcs.length < 4) return results;
+
+    for (var len = 1; len <= Math.floor(rootPcs.length / 2); len++) {
+        for (var start = 0; start <= rootPcs.length - len * 2; start++) {
+            // Compute the transposition interval between the first unit and the second.
+            var transposition = mod(rootPcs[start + len] - rootPcs[start], 12);
+            if (transposition === 0) continue;
+
+            var reps = 1;
+            for (var rep = 1; start + (rep + 1) * len <= rootPcs.length; rep++) {
+                var ok = true;
+                for (var k = 0; k < len; k++) {
+                    var expected = mod(rootPcs[start + rep * len - len + k] + transposition, 12);
+                    if (rootPcs[start + rep * len + k] !== expected) { ok = false; break; }
+                }
+                if (ok) reps++; else break;
+            }
+
+            var minReps = (len === 1) ? 3 : 2;
+            if (reps >= minReps) {
+                var direction = transposition <= 6 ? "ascending" : "descending";
+                var simpleInt = transposition <= 6 ? transposition : 12 - transposition;
+                var type;
+                if (simpleInt === 5 || simpleInt === 7) type = "circle-of-fifths";
+                else if (simpleInt === 1 || simpleInt === 2) type = "stepwise";
+                else if (simpleInt === 3 || simpleInt === 4) type = "by-thirds";
+                else type = "other";
+                results.push({
+                    startIndex: start, length: len, repetitions: reps,
+                    interval: transposition, direction: direction, type: type
+                });
+            }
+        }
+    }
+
+    // Remove duplicates: keep the longest sequence at each start position.
+    var best = {};
+    for (var s = 0; s < results.length; s++) {
+        var key = results[s].startIndex;
+        if (!best[key] || results[s].length * results[s].repetitions > best[key].length * best[key].repetitions) {
+            best[key] = results[s];
+        }
+    }
+    var out = [];
+    for (var b in best) if (best.hasOwnProperty(b)) out.push(best[b]);
+    out.sort(function (a, b) { return a.startIndex - b.startIndex; });
+    return out;
+}
+
+// ---------------------------------------------------------------------------
+//  Pedal point detection
+// ---------------------------------------------------------------------------
+
+// Detect sustained bass notes held while harmonies change above.
+// events: array with bassPc and chord fields.
+// minLength: minimum consecutive events with same bass to qualify (default 3).
+// Returns array of { bassPc, startIndex, endIndex, startTick, endTick, startMeasure, endMeasure, type }.
+function detectPedalPoints(events, minLength) {
+    if (!minLength) minLength = 3;
+    var results = [];
+    var i = 0;
+    while (i < events.length) {
+        var bassPc = events[i].bassPc;
+        var j = i + 1;
+        while (j < events.length && events[j].bassPc === bassPc) j++;
+        var run = j - i;
+        if (run >= minLength) {
+            // Check that the harmony actually changes above the pedal.
+            var harmoniesChanged = false;
+            for (var k = i + 1; k < j; k++) {
+                var c1 = events[i].chord || identifyChord(events[i].pitchClasses || [], events[i].bassPc);
+                var c2 = events[k].chord || identifyChord(events[k].pitchClasses || [], events[k].bassPc);
+                if (c1 && c2 && c1.rootPc !== c2.rootPc) { harmoniesChanged = true; break; }
+            }
+            if (harmoniesChanged) {
+                var type = "tonic";
+                // We'll classify it later when we have the key.
+                results.push({
+                    bassPc: bassPc, startIndex: i, endIndex: j - 1,
+                    startTick: events[i].tick, endTick: events[j - 1].tick,
+                    startMeasure: events[i].measure || 1, endMeasure: events[j - 1].measure || 1,
+                    type: type, length: run
+                });
+            }
+        }
+        i = j;
+    }
+    return results;
+}
+
+// Classify the pedal type (tonic, dominant, other) given the key.
+function classifyPedalType(pedalBassPc, key) {
+    var degree = mod(pedalBassPc - key.tonicPc, 12);
+    if (degree === 0) return "tonic";
+    if (degree === 7) return "dominant";
+    if (degree === 5) return "subdominant";
+    return "other";
+}
+
+// ---------------------------------------------------------------------------
+//  Harmonic rhythm analysis
+// ---------------------------------------------------------------------------
+
+// Compute the harmonic rhythm: how many chord changes per measure.
+// events: array with chord and measure fields.
+// Returns array of { measure, chordChanges, chords:[] }.
+function analyzeHarmonicRhythm(events) {
+    if (events.length === 0) return [];
+    var measures = {};
+    var prevRoot = -1;
+    for (var i = 0; i < events.length; i++) {
+        var m = events[i].measure || 1;
+        if (!measures[m]) measures[m] = { measure: m, chordChanges: 0, chords: [] };
+        var chord = events[i].chord || identifyChord(events[i].pitchClasses || [], events[i].bassPc);
+        if (chord) {
+            var curRoot = chord.rootPc * 100 + (chord.quality === "min" ? 1 : 0);
+            if (curRoot !== prevRoot) {
+                measures[m].chordChanges++;
+                measures[m].chords.push(chordLabel(chord));
+                prevRoot = curRoot;
+            }
+        }
+    }
+    var out = [];
+    for (var mk in measures) if (measures.hasOwnProperty(mk)) out.push(measures[mk]);
+    out.sort(function (a, b) { return a.measure - b.measure; });
+    return out;
+}
+
+// ---------------------------------------------------------------------------
+//  Tendency tone resolution
+// ---------------------------------------------------------------------------
+
+// Check whether the leading tone (scale degree 7) resolves up to tonic,
+// and whether the chordal 7th resolves down by step.
+// prevEvent, currEvent: events with pitches/pitchClasses arrays.
+// key: { tonicPc, mode }.
+// Returns array of { type, description, resolved }.
+function checkTendencyTones(prevEvent, currEvent, key) {
+    var issues = [];
+    if (!prevEvent || !currEvent) return issues;
+
+    var leadingTonePc = mod(key.tonicPc - 1, 12); // semitone below tonic
+    var tonicPc = key.tonicPc;
+
+    var prevPitches = prevEvent.pitches || [];
+    var currPitches = currEvent.pitches || [];
+
+    // Check leading tone resolution.
+    for (var i = 0; i < prevPitches.length; i++) {
+        if (mod(prevPitches[i], 12) === leadingTonePc) {
+            // Look for resolution to tonic in currPitches in the same register.
+            var resolved = false;
+            for (var j = 0; j < currPitches.length; j++) {
+                if (mod(currPitches[j], 12) === tonicPc && Math.abs(currPitches[j] - prevPitches[i]) <= 2) {
+                    resolved = true; break;
+                }
+            }
+            issues.push({
+                type: "leading-tone",
+                description: resolved
+                    ? "Leading tone (" + pcToName(leadingTonePc, false) + ") resolved up to tonic"
+                    : "Leading tone (" + pcToName(leadingTonePc, false) + ") did NOT resolve up to tonic",
+                resolved: resolved
+            });
+        }
+    }
+
+    // Check chordal 7th resolution (dominant 7th -> tonic).
+    var prevChord = prevEvent.chord || identifyChord(prevEvent.pitchClasses || [], prevEvent.bassPc);
+    if (prevChord && prevChord.intervals.length >= 4) {
+        var seventhPc = mod(prevChord.rootPc + prevChord.intervals[3], 12);
+        for (var s = 0; s < prevPitches.length; s++) {
+            if (mod(prevPitches[s], 12) === seventhPc) {
+                var stepDown1 = mod(seventhPc - 1, 12);
+                var stepDown2 = mod(seventhPc - 2, 12);
+                var res7 = false;
+                for (var t = 0; t < currPitches.length; t++) {
+                    var cp = mod(currPitches[t], 12);
+                    if ((cp === stepDown1 || cp === stepDown2) && Math.abs(currPitches[t] - prevPitches[s]) <= 2) {
+                        res7 = true; break;
+                    }
+                }
+                issues.push({
+                    type: "chordal-seventh",
+                    description: res7
+                        ? "Chordal 7th (" + pcToName(seventhPc, false) + ") resolved down by step"
+                        : "Chordal 7th (" + pcToName(seventhPc, false) + ") did NOT resolve down by step",
+                    resolved: res7
+                });
+                break;
+            }
+        }
+    }
+    return issues;
+}
+
+// ---------------------------------------------------------------------------
+//  Tritone substitution detection
+// ---------------------------------------------------------------------------
+
+// Detect tritone substitutions: a dominant-quality chord whose root is a
+// tritone (6 semitones) from the expected V of the target.
+// a: the potential tritone sub chord, b: the target/resolution chord, key: current key.
+// Returns null or { label, description }.
+function classifyTritoneSub(a, b, key) {
+    if (!a || !b) return null;
+    if (a.quality !== "7" && a.triad !== "major") return null;
+
+    // The normal V of b would be a P5 above b's root.
+    var expectedV = mod(b.rootPc + 7, 12);
+    // Tritone sub is a tritone away from that expected V.
+    var tritoneDist = mod(a.rootPc - expectedV, 12);
+    if (tritoneDist !== 6) return null;
+
+    // Also confirm a resolves down by half step to b.
+    var rootMotion = mod(b.rootPc - a.rootPc, 12);
+    if (rootMotion !== 1 && rootMotion !== 11) return null;
+
+    var bRn = romanNumeral(b, key);
+    var targetLabel = bRn.accidental + ROMAN[bRn.degree - 1];
+    if (b.triad === "minor" || b.triad === "diminished") targetLabel = targetLabel.toLowerCase();
+
+    return {
+        label: "SubV/" + targetLabel,
+        description: "Tritone substitution of V/" + targetLabel +
+                     " (" + pcToName(a.rootPc, false) + "7 resolves to " + pcToName(b.rootPc, false) + ")"
+    };
+}
+
+// ---------------------------------------------------------------------------
+//  Motion type classification
+// ---------------------------------------------------------------------------
+
+// Classify the motion between two voice pairs.
+// Returns "parallel", "similar", "contrary", "oblique", or "static".
+function classifyMotion(prevLow, prevHigh, currLow, currHigh) {
+    var lowMotion = currLow - prevLow;
+    var highMotion = currHigh - prevHigh;
+    if (lowMotion === 0 && highMotion === 0) return "static";
+    if (lowMotion === 0 || highMotion === 0) return "oblique";
+    if ((lowMotion > 0) === (highMotion > 0)) {
+        // Same direction.
+        if (Math.abs(lowMotion) === Math.abs(highMotion)) return "parallel";
+        return "similar";
+    }
+    return "contrary";
+}
+
+// Analyse motion types across all voice pairs in two chords.
+// prevVoices, currVoices: arrays of MIDI pitches (sorted low to high).
+// Returns array of { voices:[i,j], motion }.
+function analyzeMotionTypes(prevVoices, currVoices) {
+    var results = [];
+    if (!prevVoices || !currVoices) return results;
+    var n = Math.min(prevVoices.length, currVoices.length);
+    for (var i = 0; i < n; i++) {
+        for (var j = i + 1; j < n; j++) {
+            results.push({
+                voices: [i, j],
+                motion: classifyMotion(prevVoices[i], prevVoices[j], currVoices[i], currVoices[j])
+            });
+        }
+    }
+    return results;
+}
+
+// ---------------------------------------------------------------------------
+//  Hidden (direct) 5ths and 8ves
+// ---------------------------------------------------------------------------
+
+// Detect hidden/direct fifths and octaves (both voices move in the same
+// direction to a perfect interval, with the upper voice moving by leap).
+function checkHiddenIntervals(prevVoices, currVoices) {
+    var issues = [];
+    if (!prevVoices || !currVoices) return issues;
+    var n = Math.min(prevVoices.length, currVoices.length);
+    for (var i = 0; i < n; i++) {
+        for (var j = i + 1; j < n; j++) {
+            var currInt = mod(currVoices[j] - currVoices[i], 12);
+            if (currInt !== 7 && currInt !== 0) continue;
+            var prevInt = mod(prevVoices[j] - prevVoices[i], 12);
+            if (prevInt === currInt) continue; // that's a parallel, not hidden
+
+            var lowMotion = currVoices[i] - prevVoices[i];
+            var highMotion = currVoices[j] - prevVoices[j];
+            // Same direction (both up or both down).
+            if (lowMotion === 0 || highMotion === 0) continue;
+            if ((lowMotion > 0) !== (highMotion > 0)) continue;
+            // Upper voice moves by leap (more than a step).
+            if (Math.abs(highMotion) <= 2) continue;
+
+            var label = currInt === 7 ? "hidden-fifths" : "hidden-octaves";
+            issues.push({
+                type: label, voices: [i, j],
+                description: (currInt === 7 ? "Hidden fifths" : "Hidden octaves") +
+                             " between voices " + (i + 1) + " and " + (j + 1)
+            });
+        }
+    }
+    return issues;
+}
+
+// ---------------------------------------------------------------------------
+//  Chord voicing analysis
+// ---------------------------------------------------------------------------
+
+// Analyze chord voicing: open/close position, spacing, doubling.
+// pitches: array of MIDI pitches (sorted low to high).
+// chord: result of identifyChord.
+// Returns { position, spacingIssues:[], doublings:[] }.
+function analyzeVoicing(pitches, chord) {
+    if (!pitches || pitches.length < 3) return null;
+    var sorted = pitches.slice().sort(function (a, b) { return a - b; });
+
+    // Close position: upper three voices fit within an octave.
+    var upperVoices = sorted.slice(sorted.length >= 4 ? 1 : 0);
+    var span = upperVoices[upperVoices.length - 1] - upperVoices[0];
+    var position = span <= 12 ? "close" : "open";
+
+    // Check spacing between adjacent voices (> P8 is a spacing error in SATB).
+    var spacingIssues = [];
+    for (var i = 0; i < sorted.length - 1; i++) {
+        var gap = sorted[i + 1] - sorted[i];
+        // Bass to tenor can be more than an octave; upper voices should be <= P8.
+        if (i > 0 && gap > 12) {
+            spacingIssues.push({
+                voices: [i, i + 1],
+                gap: gap,
+                description: "Spacing exceeds an octave between voices " + (i + 1) + " and " + (i + 2)
+            });
+        }
+    }
+
+    // Doublings.
+    var pcCount = {};
+    for (var d = 0; d < sorted.length; d++) {
+        var pc = mod(sorted[d], 12);
+        pcCount[pc] = (pcCount[pc] || 0) + 1;
+    }
+    var doublings = [];
+    for (var p in pcCount) {
+        if (pcCount.hasOwnProperty(p) && pcCount[p] > 1) {
+            doublings.push({
+                pc: parseInt(p, 10),
+                name: pcToName(parseInt(p, 10), false),
+                count: pcCount[p]
+            });
+        }
+    }
+
+    return { position: position, spacingIssues: spacingIssues, doublings: doublings };
+}
+
+// ---------------------------------------------------------------------------
+//  Pitch-class set theory (post-tonal analysis)
+// ---------------------------------------------------------------------------
+
+// Compute the normal form of a pitch-class set.
+function normalForm(pcsInput) {
+    var pcs = uniqueSorted(pcsInput);
+    if (pcs.length === 0) return [];
+    if (pcs.length === 1) return [pcs[0]];
+
+    var n = pcs.length;
+    var best = null;
+    for (var r = 0; r < n; r++) {
+        var rotation = [];
+        for (var i = 0; i < n; i++) rotation.push(mod(pcs[(r + i) % n], 12));
+        // Span from first to last.
+        var span = mod(rotation[n - 1] - rotation[0], 12);
+        if (!best || span < best.span ||
+            (span === best.span && compareSetsFromRight(rotation, best.set, n) < 0)) {
+            best = { set: rotation, span: span };
+        }
+    }
+    return best.set;
+}
+
+function compareSetsFromRight(a, b, n) {
+    for (var i = n - 1; i >= 1; i--) {
+        var da = mod(a[i] - a[0], 12);
+        var db = mod(b[i] - b[0], 12);
+        if (da < db) return -1;
+        if (da > db) return 1;
+    }
+    return 0;
+}
+
+// Compute the prime form of a pitch-class set (transposed to start on 0,
+// and compared with the inversion, picking the more compact).
+function primeForm(pcsInput) {
+    var nf = normalForm(pcsInput);
+    if (nf.length === 0) return [];
+
+    // Transpose to 0.
+    var t0 = [];
+    for (var i = 0; i < nf.length; i++) t0.push(mod(nf[i] - nf[0], 12));
+
+    // Invert and compute normal form of the inversion.
+    var inv = [];
+    for (var j = 0; j < nf.length; j++) inv.push(mod(12 - nf[j], 12));
+    var invNf = normalForm(inv);
+    var invT0 = [];
+    for (var k = 0; k < invNf.length; k++) invT0.push(mod(invNf[k] - invNf[0], 12));
+
+    // Pick the more compact one.
+    for (var c = invT0.length - 1; c >= 0; c--) {
+        if (invT0[c] < t0[c]) return invT0;
+        if (invT0[c] > t0[c]) return t0;
+    }
+    return t0;
+}
+
+// Compute the interval vector (interval class content) of a pitch-class set.
+function intervalVector(pcsInput) {
+    var pcs = uniqueSorted(pcsInput);
+    var vec = [0, 0, 0, 0, 0, 0]; // ic 1..6
+    for (var i = 0; i < pcs.length; i++) {
+        for (var j = i + 1; j < pcs.length; j++) {
+            var d = mod(pcs[j] - pcs[i], 12);
+            if (d > 6) d = 12 - d;
+            if (d >= 1 && d <= 6) vec[d - 1]++;
+        }
+    }
+    return vec;
+}
+
+// Format a pitch-class set for display: e.g. [0,1,3,7] -> "{0,1,3,7}".
+function formatPcSet(pcs) {
+    return "{" + pcs.join(",") + "}";
+}
+
+// Well-known Forte set-class names for common cardinalities.
+var FORTE_NAMES = {
+    "0,1,2": "3-1", "0,1,3": "3-2", "0,1,4": "3-3", "0,1,5": "3-4",
+    "0,1,6": "3-5", "0,2,4": "3-6", "0,2,5": "3-7", "0,2,6": "3-8",
+    "0,2,7": "3-9", "0,3,6": "3-10", "0,3,7": "3-11", "0,4,8": "3-12",
+    "0,1,2,3": "4-1", "0,1,2,4": "4-2", "0,1,3,4": "4-3", "0,1,2,5": "4-4",
+    "0,1,2,6": "4-5", "0,1,2,7": "4-6", "0,1,4,5": "4-7", "0,1,5,6": "4-8",
+    "0,1,6,7": "4-9", "0,2,3,5": "4-10", "0,1,3,5": "4-11", "0,2,3,6": "4-12",
+    "0,1,3,6": "4-13", "0,2,3,7": "4-14", "0,1,4,6": "4-15",
+    "0,1,5,7": "4-16", "0,3,4,7": "4-17", "0,1,4,7": "4-18",
+    "0,1,4,8": "4-19", "0,1,5,8": "4-20", "0,2,4,6": "4-21",
+    "0,2,4,7": "4-22", "0,2,5,7": "4-23", "0,2,4,8": "4-24",
+    "0,2,6,8": "4-25", "0,3,5,8": "4-26", "0,2,5,8": "4-27",
+    "0,3,6,9": "4-28", "0,1,3,7": "4-29"
+};
+
+// Look up the Forte name for a pitch-class set.
+function forteName(pcsInput) {
+    var pf = primeForm(pcsInput);
+    var key = pf.join(",");
+    return FORTE_NAMES[key] || (pf.length + "-?");
+}
+
+// ---------------------------------------------------------------------------
+//  Common-tone diminished 7th detection
+// ---------------------------------------------------------------------------
+
+// Detect a common-tone diminished seventh chord: a dim7 chord that shares
+// one tone with the surrounding chord(s) and acts as an embellishment.
+function classifyCommonToneDim7(chord, neighborChord, key) {
+    if (!chord || !neighborChord) return null;
+    if (chord.quality !== "dim7") return null;
+
+    var common = commonToneCount(chord.chordPcs, neighborChord.chordPcs);
+    if (common === 0) return null;
+
+    var commonTones = [];
+    for (var i = 0; i < chord.chordPcs.length; i++) {
+        if (contains(neighborChord.chordPcs, chord.chordPcs[i])) {
+            commonTones.push(pcToName(chord.chordPcs[i], false));
+        }
+    }
+
+    return {
+        type: "common-tone-dim7",
+        commonTones: commonTones,
+        description: "Common-tone diminished 7th (CT\u00b07) — shares " +
+                     commonTones.join(", ") + " with " + chordLabel(neighborChord)
+    };
+}
+
+// ---------------------------------------------------------------------------
+//  Enharmonic respelling helper
+// ---------------------------------------------------------------------------
+
+// Suggest common enharmonic respellings when notes are spelled unusually.
+// tpc: MuseScore tonal pitch class. key: { tonicPc, mode }.
+// Returns null or { suggestion, reason }.
+function suggestEnharmonic(tpc, key) {
+    var name = tpcToName(tpc);
+    // Double sharps/flats are often better spelled.
+    if (name.indexOf("##") >= 0 || name.indexOf("bb") >= 0) {
+        var pc = tpcToPc(tpc);
+        var simpler = pcToName(pc, key.mode === "minor");
+        if (simpler !== name) {
+            return { suggestion: simpler, reason: "Double accidental — consider respelling as " + simpler };
+        }
+    }
+    return null;
+}
+
+// ---------------------------------------------------------------------------
+//  Phrase structure analysis
+// ---------------------------------------------------------------------------
+
+// Detect phrase boundaries based on cadences, then label phrase structures.
+// cadences: array of { type, measure } from the cadence classifier.
+// Returns { phrases:[], structure } where structure is "period", "sentence",
+// "phrase-group", or "unknown".
+function analyzePhraseStructure(cadences) {
+    if (!cadences || cadences.length === 0) return { phrases: [], structure: "unknown" };
+
+    var phrases = [];
+    var prevMeasure = 1;
+    for (var i = 0; i < cadences.length; i++) {
+        phrases.push({
+            startMeasure: prevMeasure,
+            endMeasure: cadences[i].measure,
+            cadenceType: cadences[i].type
+        });
+        prevMeasure = cadences[i].measure + 1;
+    }
+
+    var structure = "unknown";
+    if (phrases.length >= 2) {
+        var first = phrases[0];
+        var second = phrases[1];
+        // Period: HC (antecedent) followed by PAC (consequent).
+        if (first.cadenceType === "HC" && second.cadenceType === "PAC") {
+            structure = "period";
+        } else if (first.cadenceType === "IAC" && second.cadenceType === "PAC") {
+            structure = "period";
+        } else if (first.cadenceType === "PAC" && second.cadenceType === "PAC") {
+            structure = "parallel-period";
+        } else {
+            structure = "phrase-group";
+        }
+    } else if (phrases.length === 1) {
+        structure = "single-phrase";
+    }
+    return { phrases: phrases, structure: structure };
+}
+
+// ---------------------------------------------------------------------------
+//  Enhanced aggregate analysis (add new detections to analyzeProgression)
+// ---------------------------------------------------------------------------
+
+var COLORS_EXT = {
+    modulation: "#6a1b9a",   // deep purple
+    sequence: "#00838f",     // teal
+    pedal: "#4e342e",        // brown
+    tritone: "#c62828",      // red
+    tendency: "#1b5e20",     // dark green
+    dim7ct: "#ff6f00"        // amber
+};
+
+// Node.js interop (ignored by the QML engine)
 if (typeof module !== "undefined" && module.exports) {
     module.exports = {
         mod: mod,
@@ -723,6 +1375,29 @@ if (typeof module !== "undefined" && module.exports) {
         SCALE_TEMPLATES: SCALE_TEMPLATES,
         analyzeProgression: analyzeProgression,
         keyName: keyName,
-        COLORS: COLORS
+        COLORS: COLORS,
+        // New exports
+        detectModulations: detectModulations,
+        findPivotChord: findPivotChord,
+        detectSequences: detectSequences,
+        detectPedalPoints: detectPedalPoints,
+        classifyPedalType: classifyPedalType,
+        analyzeHarmonicRhythm: analyzeHarmonicRhythm,
+        checkTendencyTones: checkTendencyTones,
+        classifyTritoneSub: classifyTritoneSub,
+        classifyMotion: classifyMotion,
+        analyzeMotionTypes: analyzeMotionTypes,
+        checkHiddenIntervals: checkHiddenIntervals,
+        analyzeVoicing: analyzeVoicing,
+        normalForm: normalForm,
+        primeForm: primeForm,
+        intervalVector: intervalVector,
+        formatPcSet: formatPcSet,
+        forteName: forteName,
+        FORTE_NAMES: FORTE_NAMES,
+        classifyCommonToneDim7: classifyCommonToneDim7,
+        suggestEnharmonic: suggestEnharmonic,
+        analyzePhraseStructure: analyzePhraseStructure,
+        COLORS_EXT: COLORS_EXT
     };
 }

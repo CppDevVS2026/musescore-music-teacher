@@ -26,6 +26,13 @@ MusicTeacher/
   voiceLeading.qml         Voice-Leading Checker (parallel 5ths/8ves)
   scaleExplorer.qml        Scale & Interval Explorer (read-only)
   nonChordTones.qml        Non-Chord-Tone Highlighter (top voice)
+  modulationDetector.qml   Modulation & Tonicization Detector
+  sequenceDetector.qml     Harmonic Sequence Finder
+  harmonicRhythm.qml       Harmonic Rhythm / Pedal Points / Tritone Subs
+  tendencyTones.qml        Tendency Tone Resolution Checker
+  motionAnalysis.qml       Motion Type & Hidden 5ths/8ves Analyzer
+  chordVoicing.qml         Chord Voicing & Spacing Analyzer
+  setClassAnalysis.qml     Pitch-Class Set / Forte Analysis (post-tonal)
   practiceChunker.qml      Practice Chunker        (focus aid)
   focusTimer.qml           Focus Practice Timer    (focus aid)
   colorCoding.qml          Color Coding            (focus aid)
@@ -46,6 +53,13 @@ test/
 | **Voice-Leading Checker** | Flags parallel perfect fifths and octaves between voices. |
 | **Scale & Interval Explorer** | Read-only: detected key, pitch inventory, which scales/modes fit, and the melodic intervals of the top voice. |
 | **Non-Chord-Tone Highlighter** | Labels passing tones, neighbors, suspensions, appoggiaturas, escape tones and anticipations in the top voice. |
+| **Modulation Detector** | Windowed key detection to identify key regions across a piece, labels modulation points and pivot chords (chords diatonic in both old and new key). |
+| **Sequence Detector** | Finds repeated harmonic patterns — circle-of-fifths, stepwise, and third-based sequences — in the chord root progression. |
+| **Harmonic Rhythm** | Measures chord-change rate per measure, detects pedal points (sustained bass with changing harmony), and flags tritone substitutions. |
+| **Tendency Tones** | Checks whether leading tones resolve up to the tonic and chordal 7ths resolve down by step; flags unresolved tendency tones in red. |
+| **Motion Analysis** | Classifies voice motion between all pairs (parallel, similar, contrary, oblique) and detects hidden (direct) fifths and octaves. |
+| **Chord Voicing** | Analyses open/close position, spacing between upper voices, doublings, and common-tone diminished 7th chords (CT°7). |
+| **Set-Class Analysis** | Post-tonal pitch-class set theory: computes normal form, prime form, interval vector, and Forte set-class name for each vertical sonority. |
 
 ### Focus / ADHD practice aids
 
@@ -71,7 +85,9 @@ test/
 - Roman numerals are placed **below** the staff; teaching callouts are placed **above**.
 - Flagged chords have their noteheads coloured by category: mediants **purple**,
   secondary dominants **blue**, mixture/chromatic **orange**, cadences **green**,
-  voice-leading problems **red**.
+  voice-leading problems **red**, modulations **deep purple**, sequences **teal**,
+  pedal points **brown**, tritone subs **red**, tendency issues **dark green**,
+  CT°7 **amber**, set-class labels **indigo**.
 - The analysis plugins modify the score (inside a single undo step) — press
   **Ctrl+Z** to remove all annotations at once.
 
