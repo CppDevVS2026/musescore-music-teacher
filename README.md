@@ -43,6 +43,10 @@ MusicTeacher/
   modeMixture.qml           Mode Mixture & Prolongation Analyzer
   rhythmAnalysis.qml        Rhythm & Syncopation Analyzer
   reductionAnalysis.qml     Reduction & Structural Analysis
+  sightReadingDifficulty.qml Sight-Reading Difficulty Scorer
+  theoryDrills.qml          Theory Drill Generator (intervals/chords/scales)
+  errorDiagnosis.qml        Error Diagnosis & Teaching Feedback
+  guidedAnalysis.qml        Guided Analysis Walkthrough
   practiceChunker.qml      Practice Chunker        (focus aid)
   focusTimer.qml           Focus Practice Timer    (focus aid)
   colorCoding.qml          Color Coding            (focus aid)
@@ -80,6 +84,10 @@ test/
 | **Mode Mixture** | Mode mixture catalog (borrowed chords from parallel minor: iv, bVI, bVII, etc.), prolongation patterns (neighbor/passing embellishments), and chord substitution classification. |
 | **Rhythm Analysis** | Syncopation detection (weak-beat attacks sustaining through strong beats), metric displacement analysis, and voice independence scoring (contrary/oblique/similar/parallel motion ratios). |
 | **Reduction Analysis** | Structural tone identification (chord tones vs embellishments), aggregate completion tracking (12-tone saturation), voice-leading efficiency measurement, melodic interval-class content, and harmonic function distribution (T/S/D percentages). |
+| **Sight-Reading Difficulty** | Scores passage difficulty 1–10 based on range, chromaticism, leap frequency, and voice count. Generates targeted practice tips (break into chunks, isolate leaps, practice diatonic skeleton first). |
+| **Theory Drills** | Interactive drill generator: interval identification, chord identification, scale identification, Roman numeral labeling, and cadence recognition. Each drill shows the question, then reveals the answer on click. |
+| **Error Diagnosis** | Diagnoses voice-leading errors (parallel 5ths/8ves, voice crossing, spacing) and common student mistakes (doubled leading tone, missing root) with detailed pedagogical explanations and fix suggestions. Includes scale-degree ear-training hints (solfège, character descriptions). |
+| **Guided Analysis** | Step-by-step guided analysis walkthrough: (1) identify key, (2) label Roman numerals, (3) find non-chord tones, (4) identify cadences, (5) check voice leading, (6) analyze harmonic function. Navigate forward/backward through steps. |
 
 ### Focus / ADHD practice aids
 
@@ -112,7 +120,8 @@ test/
   orange**, chord-scales **blue**, tension peaks **orange**, augmented sixths
   **pink**, planing **teal green**, LIPs **brown**, secondary chains **purple**,
   mode mixture **amber-yellow**, prolongation **olive**, syncopation **pink**,
-  voice independence **cyan**, structural tones **amber**, aggregate **dark green**.
+  voice independence **cyan**, structural tones **amber**, aggregate **dark green**,
+  teaching errors **red**, teaching hints **green**, guided analysis **deep purple**.
 - The analysis plugins modify the score (inside a single undo step) — press
   **Ctrl+Z** to remove all annotations at once.
 

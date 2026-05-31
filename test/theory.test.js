@@ -1251,3 +1251,257 @@ test("harmonicFunctionDistribution returns percentages", () => {
     const dist = T.harmonicFunctionDistribution(events, C_MAJOR);
     assert.strictEqual(dist.tonicPercent, 100);
 });
+
+// ===================================================================
+//  PHASE 4 TEACHING FEATURE TESTS
+// ===================================================================
+
+// --- Sight-reading difficulty ---
+
+test("scoreSightReadingDifficulty returns 1-10 score", () => {
+    const events = [
+        { pitches: [60, 64, 67], pitchClasses: [0, 4, 7] },
+        { pitches: [62, 65, 69], pitchClasses: [2, 5, 9] }
+    ];
+    const result = T.scoreSightReadingDifficulty(events, C_MAJOR);
+    assert.ok(result.score >= 1 && result.score <= 10);
+    assert.ok(result.factors);
+});
+
+test("scoreSightReadingDifficulty rates chromatic passage higher", () => {
+    const diatonic = [
+        { pitches: [60], pitchClasses: [0] },
+        { pitches: [62], pitchClasses: [2] },
+        { pitches: [64], pitchClasses: [4] }
+    ];
+    const chromatic = [
+        { pitches: [60], pitchClasses: [0] },
+        { pitches: [61], pitchClasses: [1] },
+        { pitches: [63], pitchClasses: [3] },
+        { pitches: [66], pitchClasses: [6] },
+        { pitches: [68], pitchClasses: [8] }
+    ];
+    const d = T.scoreSightReadingDifficulty(diatonic, C_MAJOR);
+    const c = T.scoreSightReadingDifficulty(chromatic, C_MAJOR);
+    assert.ok(c.factors.chromaticism >= d.factors.chromaticism);
+});
+
+// --- Interval drill ---
+
+test("generateIntervalDrill returns valid drill", () => {
+    const drill = T.generateIntervalDrill();
+    assert.ok(drill.startPitch);
+    assert.ok(drill.endPitch);
+    assert.ok(drill.intervalName);
+    assert.ok(drill.direction === "ascending" || drill.direction === "descending");
+    assert.ok(drill.semitones >= 1 && drill.semitones <= 12);
+});
+
+test("generateIntervalDrill respects options", () => {
+    const drill = T.generateIntervalDrill({ intervals: [7], minPitch: 60, maxPitch: 72 });
+    assert.strictEqual(drill.semitones, 7);
+    assert.ok(drill.startPitch >= 60);
+});
+
+// --- Chord drill ---
+
+test("generateChordDrill returns valid drill", () => {
+    const drill = T.generateChordDrill();
+    assert.ok(drill.rootPc >= 0 && drill.rootPc <= 11);
+    assert.ok(drill.quality);
+    assert.ok(drill.pitchClasses.length >= 3);
+    assert.ok(drill.answer);
+});
+
+test("generateChordDrill respects quality options", () => {
+    const drill = T.generateChordDrill({ qualities: ["min7"] });
+    assert.strictEqual(drill.quality, "min7");
+    assert.strictEqual(drill.pitchClasses.length, 4);
+});
+
+// --- Scale drill ---
+
+test("generateScaleDrill returns valid drill", () => {
+    const drill = T.generateScaleDrill();
+    assert.ok(drill.rootPc >= 0 && drill.rootPc <= 11);
+    assert.ok(drill.scaleName);
+    assert.ok(drill.pitchClasses.length >= 5);
+    assert.ok(drill.noteNames.length === drill.pitchClasses.length);
+});
+
+test("generateScaleDrill respects scale options", () => {
+    const drill = T.generateScaleDrill({ scales: ["blues"] });
+    assert.strictEqual(drill.scaleName, "blues");
+    assert.strictEqual(drill.pitchClasses.length, 6); // Blues = 6 notes.
+});
+
+// --- Error diagnosis ---
+
+test("diagnoseErrors finds parallel fifths", () => {
+    // C-G (P5) → D-A (P5) = parallel fifths.
+    const events = [
+        { pitches: [48, 55], pitchClasses: [0, 7], measure: 1 },
+        { pitches: [50, 57], pitchClasses: [2, 9], measure: 1 }
+    ];
+    const diag = T.diagnoseErrors(events, C_MAJOR);
+    assert.ok(diag.length > 0);
+    assert.ok(diag[0].explanation.length > 0);
+    assert.ok(diag[0].fix.length > 0);
+});
+
+test("diagnoseErrors returns pedagogical messages", () => {
+    const events = [
+        { pitches: [48, 55], pitchClasses: [0, 7], measure: 1 },
+        { pitches: [50, 57], pitchClasses: [2, 9], measure: 1 }
+    ];
+    const diag = T.diagnoseErrors(events, C_MAJOR);
+    if (diag.length > 0) {
+        assert.ok(diag[0].error);
+        assert.ok(diag[0].explanation);
+        assert.ok(diag[0].fix);
+    }
+});
+
+// --- Roman numeral quiz ---
+
+test("generateRomanNumeralQuiz returns chords with RN labels", () => {
+    const quiz = T.generateRomanNumeralQuiz(C_MAJOR, { count: 3 });
+    assert.strictEqual(quiz.chords.length, 3);
+    assert.ok(quiz.key);
+    for (let i = 0; i < quiz.chords.length; i++) {
+        assert.ok(quiz.chords[i].degree >= 1 && quiz.chords[i].degree <= 7);
+        assert.ok(quiz.chords[i].romanNumeral);
+    }
+});
+
+test("generateRomanNumeralQuiz works with minor key", () => {
+    const aMinor = { tonicPc: 9, mode: "minor" };
+    const quiz = T.generateRomanNumeralQuiz(aMinor, { count: 2 });
+    assert.strictEqual(quiz.chords.length, 2);
+});
+
+// --- Cadence drill ---
+
+test("generateCadenceDrill returns valid cadence", () => {
+    const drill = T.generateCadenceDrill(C_MAJOR);
+    assert.ok(drill.cadenceType);
+    assert.ok(drill.description);
+    assert.ok(drill.chords.length >= 2);
+    assert.ok(drill.key);
+});
+
+// --- Scale degree hints ---
+
+test("getScaleDegreeHint returns hint for tonic", () => {
+    const hint = T.getScaleDegreeHint(60, C_MAJOR); // C4 in C major = degree 1.
+    assert.ok(hint);
+    assert.strictEqual(hint.degree, 1);
+    assert.strictEqual(hint.solfege, "Do");
+    assert.ok(hint.character.length > 0);
+});
+
+test("getScaleDegreeHint returns hint for leading tone", () => {
+    const hint = T.getScaleDegreeHint(71, C_MAJOR); // B4 in C major = degree 7.
+    assert.ok(hint);
+    assert.strictEqual(hint.degree, 7);
+    assert.strictEqual(hint.solfege, "Ti");
+});
+
+test("SCALE_DEGREE_HINTS has all 7 degrees", () => {
+    for (let d = 1; d <= 7; d++) {
+        assert.ok(T.SCALE_DEGREE_HINTS[d]);
+        assert.ok(T.SCALE_DEGREE_HINTS[d].solfege);
+        assert.ok(T.SCALE_DEGREE_HINTS[d].character);
+    }
+});
+
+// --- Common mistakes ---
+
+test("detectCommonMistakes finds doubled leading tone", () => {
+    // Two B naturals (pc 11) in C major.
+    const events = [
+        { pitches: [47, 59, 64, 71], pitchClasses: [11, 11, 4, 11], measure: 1,
+          chord: T.identifyChord([11, 2, 5], 11), bassPc: 11 }
+    ];
+    const mistakes = T.detectCommonMistakes(events, C_MAJOR);
+    const doubled = mistakes.filter(function(m) { return m.type === "doubledLeadingTone"; });
+    assert.ok(doubled.length > 0);
+    assert.ok(doubled[0].explanation.length > 0);
+});
+
+test("detectCommonMistakes returns empty for clean writing", () => {
+    const events = [
+        { pitches: [48, 55, 60, 64], pitchClasses: [0, 7, 0, 4], measure: 1,
+          chord: T.identifyChord([0, 4, 7], 0), bassPc: 0 }
+    ];
+    const mistakes = T.detectCommonMistakes(events, C_MAJOR);
+    const doubled = mistakes.filter(function(m) { return m.type === "doubledLeadingTone"; });
+    assert.strictEqual(doubled.length, 0);
+});
+
+// --- Guided analysis ---
+
+test("generateGuidedAnalysis returns step-by-step walkthrough", () => {
+    const events = [
+        { tick: 0, measure: 1, pitchClasses: [0, 4, 7], bassPc: 0, pitches: [48, 52, 55] },
+        { tick: 480, measure: 1, pitchClasses: [5, 9, 0], bassPc: 5, pitches: [53, 57, 60] },
+        { tick: 960, measure: 2, pitchClasses: [7, 11, 2], bassPc: 7, pitches: [55, 59, 62] },
+        { tick: 1440, measure: 2, pitchClasses: [0, 4, 7], bassPc: 0, pitches: [48, 52, 55] }
+    ];
+    const analysis = T.generateGuidedAnalysis(events, C_MAJOR);
+    assert.ok(analysis.steps.length >= 5);
+    assert.ok(analysis.key);
+    assert.strictEqual(analysis.steps[0].title, "Identify the Key");
+    assert.ok(analysis.steps[1].title.indexOf("Roman") >= 0);
+});
+
+test("generateGuidedAnalysis includes harmonic function step", () => {
+    const events = [
+        { tick: 0, measure: 1, pitchClasses: [0, 4, 7], bassPc: 0, pitches: [48, 52, 55] },
+        { tick: 480, measure: 1, pitchClasses: [7, 11, 2], bassPc: 7, pitches: [55, 59, 62] }
+    ];
+    const analysis = T.generateGuidedAnalysis(events, C_MAJOR);
+    const funcStep = analysis.steps.filter(function(s) { return s.title.indexOf("Function") >= 0; });
+    assert.ok(funcStep.length > 0);
+});
+
+// --- Practice tips ---
+
+test("generatePracticeTips returns tips array", () => {
+    const events = [
+        { pitches: [60, 64, 67], pitchClasses: [0, 4, 7] },
+        { pitches: [62, 65, 69], pitchClasses: [2, 5, 9] }
+    ];
+    const tips = T.generatePracticeTips(events, C_MAJOR);
+    assert.ok(Array.isArray(tips));
+    assert.ok(tips.length > 0);
+    assert.ok(tips[0].category);
+    assert.ok(tips[0].tip);
+});
+
+test("generatePracticeTips adds leap tip for jumpy passage", () => {
+    const events = [
+        { pitches: [48], pitchClasses: [0] },
+        { pitches: [72], pitchClasses: [0] },
+        { pitches: [48], pitchClasses: [0] },
+        { pitches: [72], pitchClasses: [0] },
+        { pitches: [48], pitchClasses: [0] }
+    ];
+    const tips = T.generatePracticeTips(events, C_MAJOR);
+    const leapTips = tips.filter(function(t) { return t.category === "Leaps"; });
+    assert.ok(leapTips.length > 0);
+});
+
+// --- TEACHING_MESSAGES constant ---
+
+test("TEACHING_MESSAGES has all expected error types", () => {
+    const expected = ["parallelFifths", "parallelOctaves", "voiceCrossing",
+                      "spacingError", "unresolvedLeadingTone", "unresolvedSeventh",
+                      "doubledLeadingTone", "directFifths"];
+    for (let i = 0; i < expected.length; i++) {
+        assert.ok(T.TEACHING_MESSAGES[expected[i]], "Missing: " + expected[i]);
+        assert.ok(T.TEACHING_MESSAGES[expected[i]].error);
+        assert.ok(T.TEACHING_MESSAGES[expected[i]].explanation);
+        assert.ok(T.TEACHING_MESSAGES[expected[i]].fix);
+    }
+});
