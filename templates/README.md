@@ -21,13 +21,29 @@ A **Mass Ordinary** template scored for SATB choir and organ.
 
 - **Soprano** (treble clef)
 - **Alto** (treble clef)
-- **Tenor** (treble-8vb clef)
+- **Tenor** (treble-8vb clef — standard choral engraving practice; sounds an octave lower than written)
 - **Bass** (bass clef)
 - **Organ** (grand staff — treble + bass)
 
+### Installing as a reusable template
+
+To make this template appear in MuseScore's **New Score** wizard so you can
+create new scores from it at any time:
+
+1. Copy `Mass_SATB_Organ.mscx` into MuseScore's templates folder:
+   - **Windows:** `%HOMEPATH%\Documents\MuseScore4\Templates\`
+   - **macOS / Linux:** `~/Documents/MuseScore4/Templates/`
+   - For MuseScore 3, replace `MuseScore4` with `MuseScore3`.
+2. Restart MuseScore. The template will now appear under **Custom Templates**
+   when you create a new score (File → New).
+
+Alternatively, you can simply open the `.mscx` file directly as a regular
+score and start composing.
+
 ### How to use
 
-1. Open `Mass_SATB_Organ.mscx` in MuseScore.
+1. Open `Mass_SATB_Organ.mscx` in MuseScore (or create a new score from the
+   template if you installed it above).
 2. Each movement is separated by a **section break** — MuseScore resets bar
    numbers and reprints key/time signatures automatically.
 3. Rehearsal marks label each movement (I. Kyrie, II. Gloria, …).
