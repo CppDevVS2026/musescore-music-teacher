@@ -125,6 +125,17 @@ test/
 - The analysis plugins modify the score (inside a single undo step) — press
   **Ctrl+Z** to remove all annotations at once.
 
+## Templates
+
+The `templates/` folder contains ready-to-use MuseScore score templates:
+
+| Template | Description |
+| --- | --- |
+| **Mass_SATB_Organ.mscx** | Mass Ordinary (Kyrie, Gloria, Credo, Sanctus, Agnus Dei) for SATB choir and organ. 8 blank measures per movement, section breaks between movements, rehearsal marks, tempo markings, and Latin text references. |
+
+Open a template in MuseScore 3 or 4 and start composing — see
+[templates/README.md](templates/README.md) for details.
+
 ## Development
 
 The theory engine is plain ES5 (no build step) so the exact same file runs both in
