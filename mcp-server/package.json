@@ -1,0 +1,31 @@
+{
+  "name": "musescore-mcp",
+  "version": "1.0.0",
+  "description": "MCP server for MuseScore — music theory teaching + score control for AI assistants.",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "musescore-mcp": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc --watch",
+    "lint": "tsc --noEmit",
+    "test": "node --test dist/test/*.js"
+  },
+  "keywords": [
+    "mcp",
+    "musescore",
+    "music-theory",
+    "teaching"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.3.3"
+  }
+}

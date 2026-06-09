@@ -4,3 +4,6 @@ node_modules/
 Thumbs.db
 .vscode/
 .idea/
+mcp-server/dist/
+companion-plugin/.mcp_command.json
+companion-plugin/.mcp_response.json

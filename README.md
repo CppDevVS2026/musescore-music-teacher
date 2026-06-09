@@ -145,6 +145,16 @@ MuseScore's JS engine and under Node.
 npm test      # runs node --test against test/theory.test.js
 ```
 
+## MCP Server (AI Integration)
+
+The `mcp-server/` directory contains an MCP server that lets AI assistants
+(Devin, Antigravity, Claude, etc.) teach music theory and control MuseScore
+programmatically.  See [`mcp-server/README.md`](mcp-server/README.md) for setup
+and the full tool list.
+
+The `companion-plugin/` directory has a MuseScore QML plugin and bridge server
+for real-time control of the running MuseScore application.
+
 ## Compatibility
 
 Targets MuseScore 3.x and 4.x (including 4.4). The plugins avoid `Qt.quit()` on
